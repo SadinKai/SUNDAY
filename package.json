@@ -28,8 +28,7 @@
                     "audit:artifacts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/audit-release-artifacts.ps1",
                     "test:single-instance": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-single-instance.ps1",
                     "test:legacy-singleclient": "node scripts/test-legacy-singleclient.mjs",
-                    "test:legacy-multiclient": "node scripts/test-legacy-multiclient.mjs",
-                    "test:release-legacy-live": "node scripts/test-legacy-multiclient.mjs"
+                    "test:legacy-multiclient": "node scripts/test-legacy-multiclient.mjs"
                 },
     "dependencies":  {
                          "koffi":  "^2.9.0"

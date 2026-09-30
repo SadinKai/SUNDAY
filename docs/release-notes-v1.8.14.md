@@ -26,15 +26,8 @@ do not want to install SUNDAY.
 
 Multi-instance launching requires the explicit compatibility mode documented
 in the [compatibility guide](https://github.com/SadinKai/SUNDAY/blob/main/docs/compatibility.md).
-For this release, `LEGACY_COMPAT=1` selects the shipping legacy clone/slot
-compatibility path; without that exact opt-in, the runtime remains fail-closed.
-The signed packaged runtime is live-qualified on Windows with authorized test
-accounts before publication. This release does not require the future
-isolated-provider VM infrastructure.
-
-Legacy compatibility is not an official Roblox feature, is not endorsed by
-Roblox, and is not a security boundary. Qualification is specific to the exact
-release build and host configuration tested.
+The default runtime remains fail-closed when an isolated execution environment
+is unavailable.
 
 SUNDAY is an independent project and is not affiliated with or endorsed by
 Roblox Corporation. Advanced setup and runtime details are available in the

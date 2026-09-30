@@ -42,15 +42,9 @@ manifest-signing secrets. Its order is:
    inventories, and SHA-256 checksums;
 9. audit the exact artifact graph and scan source and artifacts for credential
    material without logging matched values;
-10. attest the exact release asset set and upload the immutable signed candidate
-    for a separate live gate;
-11. on a dedicated Windows qualification host, refuse any pre-existing Roblox
-    process and exercise the packaged `LEGACY_COMPAT=1` runtime with authorized
-    test accounts through one-, two-, and three-client launch, sibling
-    preservation, safe restart, responsiveness, ordered teardown, and clone
-    cleanup checks;
-12. after live qualification succeeds, create a draft release, then download
-    and verify the uploaded bytes, checksums, release target, and
+10. qualify the exact artifacts in a disposable Windows VM;
+11. attest and upload the approved asset set to a draft GitHub release;
+12. download and verify the uploaded bytes, checksums, release target, and
     Authenticode publisher; and
 13. publish the verified draft as the latest release.
 
@@ -60,23 +54,8 @@ artifacts.
 
 The workflow refuses non-`main` dispatches, an existing version tag or release,
 missing CI or CodeQL success for the exact commit, open code-scanning alerts,
-missing signing configuration, and missing or failed live legacy qualification.
-The live gate uses the signed `dist/Sunday` runtime produced by the build job,
-not the development source runtime. It requires a controlled self-hosted Windows
-runner labelled `sunday-legacy-qualification`, an absolute
-`SUNDAY_LEGACY_QUALIFICATION_USER_DATA` repository variable that points outside
-the checkout, and three authorized saved test accounts. The optional
-`SUNDAY_LEGACY_QUALIFICATION_ACCOUNT_IDS` variable can select those accounts.
-A failed publication attempt removes only the draft release and tag created by
-that workflow run.
-
-Version `1.8.14` ships the explicitly enabled legacy compatibility mechanism.
-Its production gate does not depend on the future disposable-VM isolation
-provider, GPU passthrough, signed guest/image identities, or a VM activation
-record. Those belong to the replacement isolation architecture and do not
-qualify this release. Legacy compatibility is not an official Roblox feature or
-a security boundary; the live result applies only to the exact build and Windows
-qualification host that were checked.
+and missing clean-VM qualification. A failed publication attempt removes only
+the draft release and tag created by that workflow run.
 
 ## Reproducibility boundary
 

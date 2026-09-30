@@ -192,7 +192,6 @@ test('release workflow requires signing, locked builds, SBOM, provenance, and si
   const portable = read('scripts/build-portable.ps1');
   const installer = read('scripts/build-installer.ps1');
   const manifest = read('scripts/create-release-manifest.mjs');
-  const legacyLive = read('scripts/test-legacy-multiclient.mjs');
   assert.match(workflow, /CODESIGNING_PFX is required/);
   assert.match(workflow, /SUNDAY_RELEASE_PRIVATE_KEY_PKCS8_B64/);
   assert.match(workflow, /cargo clippy --locked[\s\S]*--all-targets --all-features/);
@@ -201,12 +200,7 @@ test('release workflow requires signing, locked builds, SBOM, provenance, and si
   assert.match(workflow, /npm run audit:artifacts/);
   assert.match(workflow, /contents: write/);
   assert.match(workflow, /npm run audit:release-secrets -- dist\/Sunday release-assets/);
-  assert.match(workflow, /runs-on: \[self-hosted, windows, x64, sunday-legacy-qualification\]/);
-  assert.match(workflow, /LEGACY_COMPAT: '1'/);
-  assert.match(workflow, /SUNDAY_LEGACY_REQUIRE_PACKAGED: '1'/);
-  assert.match(workflow, /npm run test:release-legacy-live/);
-  assert.match(workflow, /needs: \[build, legacy-live-qualification\]/);
-  assert.doesNotMatch(workflow, /npm run test:isolation-real|disposable Windows VM/);
+  assert.match(workflow, /npm run test:isolation-real/);
   assert.match(workflow, /gh release create[\s\S]*--draft/);
   assert.match(workflow, /gh release download/);
   assert.match(workflow, /gh release edit[\s\S]*--draft=false --latest/);
@@ -216,16 +210,6 @@ test('release workflow requires signing, locked builds, SBOM, provenance, and si
   assert.match(installer, /cargo build --release --locked/);
   assert.match(manifest, /asymmetricKeyType !== 'ed25519'/);
   assert.match(manifest, /timingSafeEqual\(publicKey, embeddedPublic\)/);
-
-  const reportDefinition = legacyLive.slice(legacyLive.indexOf('const report ='), legacyLive.indexOf('function fileEvidence'));
-  assert.doesNotMatch(reportDefinition, /userData|accountIds|capability:/);
-  assert.match(legacyLive, /const preExisting = await processProvider\.list\(\);[\s\S]*if \(preExisting\.length\)[\s\S]*startBackend\(\);/);
-  assert.match(legacyLive, /instance_kill', \{ capability \}/);
-  assert.match(legacyLive, /instance\.status === 'running'/);
-  assert.match(legacyLive, /externalAtStartup[\s\S]*crossProcessActions/);
-  assert.match(legacyLive, /await waitForCloneCleanup\(\)/);
-  assert.match(legacyLive, /SUNDAY_LEGACY_RELEASE_DIR/);
-  assert.doesNotMatch(legacyLive, /killAllPlayers|instances_kill_all|taskkill/i);
 });
 
 test('manual release packaging rejects runtime residue and reparse points', () => {

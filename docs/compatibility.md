@@ -44,14 +44,5 @@ follow Roblox's terms and applicable rules.
 
 Automated tests use synthetic fixtures for normal directories, directory
 reparse points, regular files, invalid `content` shapes, slot reuse, stale
-leases, sibling preservation, and process identity. The v1.8.14 production gate
-runs the packaged legacy driver on a dedicated, controlled Windows host with
-authorized test accounts. It refuses to start while any Roblox client already
-exists, uses only SUNDAY-issued process capabilities for actions, verifies
-responsive one-, two-, and three-client operation, and requires ordered teardown
-with no clone directories left behind.
-
-The future provider-backed isolation architecture and its disposable-VM
-qualification remain separate work. They are not prerequisites for the legacy
-compatibility mechanism shipped in v1.8.14. See [Testing](testing.md) for the
-current live-test boundary.
+leases, sibling preservation, and process identity. Live drivers are manual and
+must run only in a disposable Windows VM as described in [Testing](testing.md).
