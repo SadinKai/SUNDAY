@@ -1,0 +1,89 @@
+name: Bug report
+description: Report reproducible incorrect behavior in SUNDAY Launcher.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include cookies, passwords, tokens,
+        account databases, signing material, or unredacted personal information.
+
+  - type: input
+    id: version
+    attributes:
+      label: SUNDAY version or commit
+      placeholder: 1.8.14 or a commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2, x64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: legacy_compat
+    attributes:
+      label: Was LEGACY_COMPAT enabled?
+      options:
+        - No
+        - Yes, with the exact value 1
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic or redacted data and provide the smallest reliable sequence.
+      placeholder: |
+        1. Start SUNDAY...
+        2. Open...
+        3. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include exact sanitized error text when available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant configuration
+      description: List variable names and non-secret modes only. Never paste values containing credentials.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Optional. Remove cookies, tokens, account IDs, user names, and local paths.
+      render: text
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I searched existing issues and documentation.
+          required: true
+        - label: I removed credentials, account data, and personal information.
+          required: true
+        - label: This is not a vulnerability report; security issues belong in private reporting.
+          required: true

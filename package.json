@@ -1,0 +1,38 @@
+{
+    "name":  "sunday-launcher",
+    "version": "1.8.14",
+    "description":  "SUNDAY Launcher - a fail-closed Windows account and process management shell for Roblox",
+    "author":  "SADINKAI",
+    "license":  "MIT",
+    "engines": {
+                   "node": "22.23.x"
+               },
+    "scripts":  {
+                    "start":  "tauri dev",
+                    "tauri":  "tauri",
+                    "test":  "node --test test/safe-unit.test.js test/architecture-behavior.test.js test/phase5-orchestration.test.js test/isolation-protocol.test.js test/isolation-synthetic.test.js test/legacy-compat.test.js test/runtime-adapter-selection.test.js test/identity-migration.test.js test/source-policy.test.js",
+                    "test:isolation-synthetic": "node --test test/isolation-synthetic.test.js",
+                    "test:isolation-protocol": "node --test test/isolation-protocol.test.js",
+                    "test:isolation-real": "node scripts/qualify-windows-vm.mjs",
+                    "selftest":  "npm test",
+                    "test:smoke:isolated-vm": "node test/smoke.js",
+                    "test:ui:isolated-vm":  "node test/ui-features.js",
+                    "make-icon":  "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-icon.ps1",
+                    "build":  "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
+                    "dist":  "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
+                    "release:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-release.ps1",
+                    "release:manifest": "node scripts/create-release-manifest.mjs",
+                    "release:verify": "node scripts/verify-release-manifest.mjs",
+                    "test:release-manifest": "node scripts/qualify-release-manifest.mjs",
+                    "audit:artifacts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/audit-release-artifacts.ps1",
+                    "test:single-instance": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-single-instance.ps1",
+                    "test:legacy-singleclient": "node scripts/test-legacy-singleclient.mjs",
+                    "test:legacy-multiclient": "node scripts/test-legacy-multiclient.mjs"
+                },
+    "dependencies":  {
+                         "koffi":  "^2.9.0"
+                     },
+    "devDependencies":  {
+                            "@tauri-apps/cli":  "^2.11.4"
+                        }
+}

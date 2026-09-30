@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="SUNDAY Launcher solar S logo">
+  <rect x="7" y="7" width="242" height="242" rx="56" fill="#17120f"/>
+  <rect x="7.5" y="7.5" width="241" height="241" rx="55.5" fill="none" stroke="#4a3528" stroke-width="8.5"/>
+  <path d="M36 176h184" fill="none" stroke="#6b4732" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="128" cy="128" r="72" fill="#f26a2e"/>
+  <path d="M171 87c-12-11-28-17-47-17-25 0-43 12-43 31 0 20 18 27 48 34 30 7 46 17 46 38 0 23-21 39-51 39-23 0-43-8-59-24" fill="none" stroke="#17120f" stroke-width="23" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M54 176h148" fill="none" stroke="#ff9b63" stroke-width="5" stroke-linecap="round"/>
+</svg>
