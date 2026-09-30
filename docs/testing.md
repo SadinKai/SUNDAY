@@ -78,9 +78,15 @@ npm run test:legacy-singleclient
 npm run test:legacy-multiclient
 ```
 
-These commands can start Roblox. Run them only in a disposable Windows VM with
-disposable accounts and no valuable Roblox process, cookie, install, or user
-data. They are never part of CI or a normal build.
+These commands can start Roblox. Run them only on a dedicated, controlled
+Windows host with authorized test accounts and no pre-existing Roblox process.
+Keep its SUNDAY state outside the repository and separate from normal user data.
+The release workflow runs the packaged multi-client driver as a required live
+gate; normal pull-request CI and a normal local build remain non-live.
+
+The future provider-backed isolation tests still use the disposable-VM boundary
+described above. That provider is separate from the v1.8.14 legacy compatibility
+path and is not a production prerequisite for this release.
 
 No live Roblox test is implied by a source, CI, packaging, or smoke-test pass.
 

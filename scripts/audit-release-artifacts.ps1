@@ -341,7 +341,7 @@ try {
       'Local artifacts are unsigned development evidence, not releasable production artifacts.',
       'This audit does not install or execute the installer.',
       'PE primitive-name presence records linked Windows or Rust runtime symbols and does not by itself prove an authored reachable operation; authored JavaScript bindings are checked separately.',
-      'Publisher trust, timestamp-chain validation, published-digest verification, and disposable-VM qualification require signed release artifacts.'
+      'Publisher trust, timestamp-chain validation, published-digest verification, and controlled Windows legacy live qualification require signed release artifacts.'
     )
   }
   $outputPath = Join-Path $dist 'artifact-audit.json'

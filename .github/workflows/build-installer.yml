@@ -199,9 +199,6 @@ jobs:
       - name: Scan source and release tree for credential material
         run: npm run audit:release-secrets -- dist/Sunday release-assets
 
-      - name: Qualify exact release artifacts in a disposable Windows VM
-        run: npm run test:isolation-real
-
       - name: Remove signing material
         if: always()
         shell: pwsh
@@ -215,13 +212,118 @@ jobs:
         with:
           subject-path: 'release-assets/*'
 
-      - name: Upload signed artifacts
+      - name: Upload immutable signed release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sunday-launcher-windows-signed-${{ github.sha }}
-          path: release-assets/*
+          name: sunday-release-candidate-${{ github.sha }}
+          path: |
+            release-assets/*
+            dist/Sunday/**
           if-no-files-found: error
           retention-days: 14
+
+  legacy-live-qualification:
+    needs: build
+    runs-on: [self-hosted, windows, x64, sunday-legacy-qualification]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.0'
+
+      - name: Download immutable signed release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sunday-release-candidate-${{ github.sha }}
+          path: .
+
+      - name: Validate dedicated legacy qualification host and signed runtime
+        shell: pwsh
+        env:
+          SUNDAY_USER_DATA: ${{ vars.SUNDAY_LEGACY_QUALIFICATION_USER_DATA }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:SUNDAY_USER_DATA)) {
+            throw 'SUNDAY_LEGACY_QUALIFICATION_USER_DATA must name the dedicated authorized test-account state directory.'
+          }
+          if (-not [IO.Path]::IsPathRooted($env:SUNDAY_USER_DATA)) {
+            throw 'SUNDAY_LEGACY_QUALIFICATION_USER_DATA must be an absolute path.'
+          }
+          $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\') + '\'
+          $state = [IO.Path]::GetFullPath($env:SUNDAY_USER_DATA).TrimEnd('\') + '\'
+          if ($state.StartsWith($workspace, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Legacy qualification state must remain outside the repository workspace.'
+          }
+          if (-not (Test-Path -LiteralPath $env:SUNDAY_USER_DATA -PathType Container)) {
+            throw 'The dedicated legacy qualification state directory is unavailable.'
+          }
+          foreach ($file in @('dist/Sunday/Sunday.exe', 'dist/Sunday/node.exe')) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne 'Valid') { throw "$file signature status is $($signature.Status)." }
+          }
+
+      - name: Qualify exact packaged legacy multi-instance path
+        env:
+          LEGACY_COMPAT: '1'
+          SUNDAY_LEGACY_REQUIRE_PACKAGED: '1'
+          SUNDAY_LEGACY_RELEASE_DIR: ${{ github.workspace }}\dist\Sunday
+          SUNDAY_USER_DATA: ${{ vars.SUNDAY_LEGACY_QUALIFICATION_USER_DATA }}
+          SUNDAY_LEGACY_TEST_ACCOUNT_IDS: ${{ vars.SUNDAY_LEGACY_QUALIFICATION_ACCOUNT_IDS }}
+        run: npm run test:release-legacy-live
+
+      - name: Upload redacted live qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunday-legacy-live-qualification-${{ github.sha }}
+          path: artifacts/phase7-legacy-multiclient-result.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    needs: [build, legacy-live-qualification]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Download qualified immutable release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sunday-release-candidate-${{ github.sha }}
+          path: .
+
+      - name: Revalidate publication identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF -cne 'refs/heads/main') {
+            throw 'Production releases must be dispatched from refs/heads/main.'
+          }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -cne '1.8.14') { throw 'This first-public-release workflow requires version 1.8.14.' }
+          $tag = "v$version"
+          $existingTag = git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect remote release tags.' }
+          if ($existingTag) { throw "Release tag already exists: $tag" }
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect existing GitHub releases.' }
+          if (@($releases | Where-Object tag_name -CEQ $tag).Count -ne 0) {
+            throw "GitHub release already exists: $tag"
+          }
+          "SUNDAY_RELEASE_TAG=$tag" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "SUNDAY_RELEASE_VERSION=$version" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Create draft release with the approved assets
         shell: pwsh

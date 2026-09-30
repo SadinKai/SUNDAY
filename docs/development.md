@@ -80,9 +80,10 @@ SQLite files, account exports, logs, clone trees, or screenshots.
 
 ## Safe local testing
 
-The default automated suite does not launch Roblox. Native UI tests require the
-explicit `SUNDAY_ISOLATED_VM=1` guard and a disposable Windows VM. Live legacy
-drivers additionally require `LEGACY_COMPAT=1`, disposable accounts, and an
-environment where losing local state is acceptable.
+The default automated suite does not launch Roblox. Native UI tests for the
+future isolated-provider path retain their explicit `SUNDAY_ISOLATED_VM=1`
+guard. Live legacy drivers require `LEGACY_COMPAT=1`, authorized dedicated test
+accounts, no pre-existing Roblox process, and a controlled Windows host where
+test state is isolated from normal use.
 
 See [Testing](testing.md) for the complete boundary.
