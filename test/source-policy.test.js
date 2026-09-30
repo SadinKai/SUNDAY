@@ -198,6 +198,13 @@ test('release workflow requires signing, locked builds, SBOM, provenance, and si
   assert.match(workflow, /npm sbom --sbom-format cyclonedx/);
   assert.match(workflow, /actions\/attest-build-provenance@[a-f0-9]{40}/);
   assert.match(workflow, /npm run audit:artifacts/);
+  assert.match(workflow, /contents: write/);
+  assert.match(workflow, /npm run audit:release-secrets -- dist\/Sunday release-assets/);
+  assert.match(workflow, /npm run test:isolation-real/);
+  assert.match(workflow, /gh release create[\s\S]*--draft/);
+  assert.match(workflow, /gh release download/);
+  assert.match(workflow, /gh release edit[\s\S]*--draft=false --latest/);
+  assert.match(workflow, /Remove incomplete workflow-owned release on failure/);
   assert.doesNotMatch(workflow, /Expand-Archive/);
   assert.match(portable, /tauri build -- --locked/);
   assert.match(installer, /cargo build --release --locked/);

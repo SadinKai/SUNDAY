@@ -1,21 +1,57 @@
-<p align="center">
-  <img src="assets/logo.svg" width="96" alt="SUNDAY Launcher logo">
-</p>
+# SUNDAY
 
-# SUNDAY Launcher
+### A Roblox account manager and multi-instance launcher for Windows.
+
+SUNDAY lets you manage multiple Roblox accounts, sign into them, and launch
+multiple Roblox clients at the same time from one desktop app.
+
+**One app. Multiple accounts. Multiple Roblox clients.**
+
+[Download](https://github.com/SadinKai/SUNDAY/releases) ·
+[Documentation](docs/getting-started.md) ·
+[Report a bug](https://github.com/SadinKai/SUNDAY/issues/new?template=bug_report.yml)
+
+> **Screenshot pending:** the repository does not yet contain a tracked
+> screenshot of the current SUNDAY Launch workflow.
+
+## What is SUNDAY?
+
+SUNDAY is a Windows desktop launcher built for people who use more than one
+Roblox account.
+
+- **Manage multiple accounts** in one place
+- **Sign in and switch between accounts** quickly
+- **Launch multiple Roblox clients** at the same time
+- **See and control your active clients** from one dashboard
+- **Browse Roblox games and players** without leaving SUNDAY
+
+> Multi-instance launching is an explicitly enabled compatibility feature.
+> SUNDAY is an independent project and is not affiliated with or endorsed by
+> Roblox Corporation.
+
+## How it works
+
+1. Add your Roblox accounts
+2. Select the accounts you want to use
+3. Choose what to launch
+4. Start your Roblox clients
+5. Manage all active clients from SUNDAY
+
+## Why SUNDAY?
+
+Managing several Roblox accounts shouldn't mean juggling a pile of browser
+windows, shortcuts, and separate sessions.
+
+SUNDAY puts your accounts and clients into one place.
+
+## Project status
 
 [![CI](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4)
 ![Version](https://img.shields.io/badge/version-1.8.14-7A5AF8)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-SUNDAY Launcher is a Windows desktop launcher for managing Roblox accounts,
-sessions, and explicitly enabled multi-instance workflows.
-
-SUNDAY is an independent project maintained by **SADINKAI**. It is not affiliated
-with or endorsed by Roblox Corporation.
-
-## What SUNDAY does
+## Technical details
 
 | Area | Capability |
 | --- | --- |

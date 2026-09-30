@@ -40,11 +40,22 @@ manifest-signing secrets. Its order is:
 7. sign and verify the final installer;
 8. generate the portable archive, signed canonical manifest, dependency
    inventories, and SHA-256 checksums;
-9. audit the exact artifact graph and attest uploaded assets.
+9. audit the exact artifact graph and scan source and artifacts for credential
+   material without logging matched values;
+10. qualify the exact artifacts in a disposable Windows VM;
+11. attest and upload the approved asset set to a draft GitHub release;
+12. download and verify the uploaded bytes, checksums, release target, and
+    Authenticode publisher; and
+13. publish the verified draft as the latest release.
 
 Signing failure is fatal. The workflow removes temporary certificate material in
 an unconditional cleanup step. No private signing material belongs in source or
 artifacts.
+
+The workflow refuses non-`main` dispatches, an existing version tag or release,
+missing CI or CodeQL success for the exact commit, open code-scanning alerts,
+and missing clean-VM qualification. A failed publication attempt removes only
+the draft release and tag created by that workflow run.
 
 ## Reproducibility boundary
 

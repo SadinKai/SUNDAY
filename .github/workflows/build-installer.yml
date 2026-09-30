@@ -9,9 +9,15 @@ on:
         type: string
 
 permissions:
-  contents: read
+  actions: read
+  contents: write
   id-token: write
   attestations: write
+  security-events: read
+
+concurrency:
+  group: sunday-production-release
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -20,6 +26,53 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate canonical release identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF -cne 'refs/heads/main') {
+            throw 'Production releases must be dispatched from refs/heads/main.'
+          }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw 'package.json does not contain a valid release version.'
+          }
+          $tag = "v$version"
+          $existingTag = git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect remote release tags.' }
+          if ($existingTag) { throw "Release tag already exists: $tag" }
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect existing GitHub releases.' }
+          if (@($releases | Where-Object tag_name -CEQ $tag).Count -ne 0) {
+            throw "GitHub release already exists: $tag"
+          }
+          "SUNDAY_RELEASE_TAG=$tag" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "SUNDAY_RELEASE_VERSION=$version" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "SUNDAY_RELEASE_BASE_URL=https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Require successful hosted verification for this commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runs = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs?head_sha=$env:GITHUB_SHA&per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect hosted verification runs.' }
+          foreach ($workflow in @('CI', 'CodeQL')) {
+            $passed = @($runs.workflow_runs | Where-Object {
+              $_.name -ceq $workflow -and $_.event -ceq 'push' -and
+              $_.status -ceq 'completed' -and $_.conclusion -ceq 'success'
+            })
+            if ($passed.Count -eq 0) { throw "$workflow has not passed for exact commit $env:GITHUB_SHA." }
+          }
+          $alerts = gh api "repos/$env:GITHUB_REPOSITORY/code-scanning/alerts?state=open&ref=refs/heads/main&per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect open code-scanning alerts.' }
+          if (@($alerts).Count -ne 0) { throw 'Open code-scanning alerts block production release.' }
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -45,10 +98,23 @@ jobs:
       - name: Run safe verification suite
         run: npm test
 
+      - name: Audit production JavaScript dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+
+      - name: Audit Rust dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --file src-tauri/Cargo.lock
+          cargo audit --file installer/Cargo.lock
+
       - name: Check Rust crates
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path installer/Cargo.toml --all -- --check
           cargo check --locked --manifest-path src-tauri/Cargo.toml
           cargo check --locked --manifest-path installer/Cargo.toml
           cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
@@ -130,6 +196,12 @@ jobs:
             '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), $_.Name
           } | Set-Content (Join-Path $out 'checksums.txt') -Encoding ascii
 
+      - name: Scan source and release tree for credential material
+        run: npm run audit:release-secrets -- dist/Sunday release-assets
+
+      - name: Qualify exact release artifacts in a disposable Windows VM
+        run: npm run test:isolation-real
+
       - name: Remove signing material
         if: always()
         shell: pwsh
@@ -150,3 +222,103 @@ jobs:
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Create draft release with the approved assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'docs/release-notes-v1.8.14.md')) {
+            throw 'Canonical release notes are missing.'
+          }
+          if ($env:SUNDAY_RELEASE_VERSION -cne '1.8.14') {
+            throw 'This first-public-release workflow requires version 1.8.14.'
+          }
+          "SUNDAY_RELEASE_ATTEMPTED=1" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $assets = @(
+            'release-assets/SundayInstaller.exe',
+            "release-assets/SundayPortable_$($env:SUNDAY_RELEASE_VERSION)_x64.zip",
+            'release-assets/checksums.txt',
+            'release-assets/sunday-release.json',
+            'release-assets/release-inventory.json',
+            'release-assets/npm-sbom.cdx.json',
+            'release-assets/src-tauri-cargo-metadata.json',
+            'release-assets/installer-cargo-metadata.json'
+          )
+          gh release create $env:SUNDAY_RELEASE_TAG @assets `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "SUNDAY Launcher $env:SUNDAY_RELEASE_TAG" `
+            --notes-file 'docs/release-notes-v1.8.14.md' `
+            --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed.' }
+
+      - name: Verify downloaded release assets before publication
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUNDAY_RELEASE_PUBLISHER: ${{ vars.SUNDAY_RELEASE_PUBLISHER }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @(
+            'SundayInstaller.exe',
+            "SundayPortable_$($env:SUNDAY_RELEASE_VERSION)_x64.zip",
+            'checksums.txt',
+            'installer-cargo-metadata.json',
+            'npm-sbom.cdx.json',
+            'release-inventory.json',
+            'src-tauri-cargo-metadata.json',
+            'sunday-release.json'
+          ) | Sort-Object
+          $release = gh release view $env:SUNDAY_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets,isDraft,isPrerelease,tagName,targetCommitish | ConvertFrom-Json
+          if (-not $release.isDraft -or $release.isPrerelease) { throw 'Release must remain a non-prerelease draft during verification.' }
+          if ($release.tagName -cne $env:SUNDAY_RELEASE_TAG -or $release.targetCommitish -cne $env:GITHUB_SHA) {
+            throw 'Draft release tag or target commit is incorrect.'
+          }
+          $actual = @($release.assets | ForEach-Object name | Sort-Object)
+          if (Compare-Object $expected $actual) { throw 'Draft release asset set is not the exact approved set.' }
+          $download = Join-Path $env:RUNNER_TEMP "sunday-release-download-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Path $download | Out-Null
+          gh release download $env:SUNDAY_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download the draft release assets.' }
+          $localChecksumsHash = (Get-FileHash release-assets/checksums.txt -Algorithm SHA256).Hash
+          $downloadedChecksumsHash = (Get-FileHash (Join-Path $download 'checksums.txt') -Algorithm SHA256).Hash
+          if ($localChecksumsHash -cne $downloadedChecksumsHash) { throw 'Uploaded checksums.txt differs from the audited local file.' }
+          foreach ($line in Get-Content (Join-Path $download 'checksums.txt')) {
+            if ($line -notmatch '^([0-9a-f]{64})  ([^/\\]+)$') { throw 'checksums.txt contains an invalid row.' }
+            $file = Join-Path $download $Matches[2]
+            if (-not (Test-Path -LiteralPath $file)) { throw "Checksummed asset is missing: $($Matches[2])" }
+            $actualHash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -cne $Matches[1]) { throw "Uploaded asset digest mismatch: $($Matches[2])" }
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $download 'SundayInstaller.exe')
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -cne $env:SUNDAY_RELEASE_PUBLISHER) {
+            throw 'Downloaded installer Authenticode identity is invalid.'
+          }
+
+      - name: Publish verified release as latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release edit $env:SUNDAY_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to publish the verified release.' }
+          $release = gh release view $env:SUNDAY_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft,isPrerelease,tagName,url | ConvertFrom-Json
+          if ($release.isDraft -or $release.isPrerelease -or $release.tagName -cne $env:SUNDAY_RELEASE_TAG) {
+            throw 'Published release state is invalid.'
+          }
+          $readme = Get-Content README.md -Raw
+          if ($readme -notmatch [regex]::Escape('https://github.com/SadinKai/SUNDAY/releases')) {
+            throw 'README Download link does not target the canonical Releases page.'
+          }
+          Write-Host "Published and verified: $($release.url)"
+
+      - name: Remove incomplete workflow-owned release on failure
+        if: failure() && env.SUNDAY_RELEASE_ATTEMPTED == '1'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete $env:SUNDAY_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes 2>$null
