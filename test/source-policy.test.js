@@ -187,29 +187,25 @@ test('installer removal is ledger-bound and never recursively deletes an install
   assert.doesNotMatch(shell, /C:\\\\Users\\\\Public/);
 });
 
-test('release workflow requires signing, locked builds, SBOM, provenance, and signed manifests', () => {
+test('initial public release workflow builds only the exact audited unsigned assets', () => {
   const workflow = read('.github/workflows/build-installer.yml');
   const portable = read('scripts/build-portable.ps1');
   const installer = read('scripts/build-installer.ps1');
-  const manifest = read('scripts/create-release-manifest.mjs');
-  assert.match(workflow, /CODESIGNING_PFX is required/);
-  assert.match(workflow, /SUNDAY_RELEASE_PRIVATE_KEY_PKCS8_B64/);
   assert.match(workflow, /cargo clippy --locked[\s\S]*--all-targets --all-features/);
-  assert.match(workflow, /npm sbom --sbom-format cyclonedx/);
-  assert.match(workflow, /actions\/attest-build-provenance@[a-f0-9]{40}/);
+  assert.match(workflow, /npm run dist/);
+  assert.match(workflow, /npm run release:package/);
   assert.match(workflow, /npm run audit:artifacts/);
-  assert.match(workflow, /contents: write/);
   assert.match(workflow, /npm run audit:release-secrets -- dist\/Sunday release-assets/);
-  assert.match(workflow, /npm run test:isolation-real/);
-  assert.match(workflow, /gh release create[\s\S]*--draft/);
-  assert.match(workflow, /gh release download/);
-  assert.match(workflow, /gh release edit[\s\S]*--draft=false --latest/);
-  assert.match(workflow, /Remove incomplete workflow-owned release on failure/);
+  assert.match(workflow, /SundayInstaller\.exe/);
+  assert.match(workflow, /SundayPortable_\$\{version\}_x64\.zip/);
+  assert.match(workflow, /SHA256SUMS\.txt/);
+  assert.match(workflow, /Get-FileHash[\s\S]*SHA256/);
+  assert.match(workflow, /actions\/upload-artifact@[a-f0-9]{40}/);
+  assert.match(workflow, /permissions:[\s\S]*contents: read/);
+  assert.doesNotMatch(workflow, /CODESIGNING|SUNDAY_RELEASE_PRIVATE_KEY|attest-build-provenance|test:isolation-real|sunday-legacy-qualification|gh release/);
   assert.doesNotMatch(workflow, /Expand-Archive/);
   assert.match(portable, /tauri build -- --locked/);
   assert.match(installer, /cargo build --release --locked/);
-  assert.match(manifest, /asymmetricKeyType !== 'ed25519'/);
-  assert.match(manifest, /timingSafeEqual\(publicKey, embeddedPublic\)/);
 });
 
 test('manual release packaging rejects runtime residue and reparse points', () => {

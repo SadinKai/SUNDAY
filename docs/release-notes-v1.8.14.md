@@ -2,33 +2,44 @@
 
 SUNDAY is a Roblox account manager and multi-instance launcher for Windows.
 
-It lets you:
+With SUNDAY you can:
 
-- manage multiple Roblox accounts;
-- sign into accounts from one app;
-- launch multiple Roblox clients; and
-- manage active clients from one dashboard.
+- manage multiple Roblox accounts
+- sign into accounts from one app
+- launch multiple Roblox clients
+- manage active clients from one dashboard
 
-## Requirements
+## Installation
 
-- Windows 10 or later (x64)
-- Microsoft Edge WebView2 Runtime
+Download `SundayInstaller.exe` and run it.
 
-## Install and start
+A portable version is also available as:
 
-1. Download `SundayInstaller.exe` from this release.
-2. Run the installer and choose an installation folder.
-3. Start **SUNDAY Launcher** from the installed shortcut.
-4. Add or select your Roblox accounts, choose a destination, and launch.
+`SundayPortable_1.8.14_x64.zip`
 
-The portable `SundayPortable_1.8.14_x64.zip` is also available for users who
-do not want to install SUNDAY.
+## Windows warning
 
-Multi-instance launching requires the explicit compatibility mode documented
-in the [compatibility guide](https://github.com/SadinKai/SUNDAY/blob/main/docs/compatibility.md).
-The default runtime remains fail-closed when an isolated execution environment
-is unavailable.
+The initial public SUNDAY binaries are unsigned. Windows SmartScreen may display
+a warning when launching the installer or application.
+
+This is expected for this initial release.
+
+## Multi-instance mode
+
+Multiple Roblox clients use SUNDAY's explicitly enabled legacy compatibility
+mode.
+
+Set:
+
+`LEGACY_COMPAT=1`
+
+before launching SUNDAY when using that mode.
+
+See the documentation for details and limitations.
 
 SUNDAY is an independent project and is not affiliated with or endorsed by
-Roblox Corporation. Advanced setup and runtime details are available in the
-[documentation](https://github.com/SadinKai/SUNDAY/tree/main/docs).
+Roblox Corporation.
+
+## Checksums
+
+SHA-256 checksums are provided with the release.
