@@ -522,6 +522,7 @@ function openFollowDialog(targetId) {
 
 const CREATE_GENDERS = ['Male', 'Female', 'Skip'];
 const CREATE_DEFAULTS_KEY = 'sunday-create-defaults-v1';
+let createSessionDefaults = null;
 let createCheckTimer = null;
 
 function defaultCreateBirthday() {
@@ -530,21 +531,19 @@ function defaultCreateBirthday() {
   return (now.getFullYear() - 18) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
 }
 
-// Birthday and profile-field choices persist between accounts — creating the
-// next one is then just a username and a password.
+// Keep birthday and profile-field choices only for this running app session.
+// Persisting them in browser storage would retain sensitive profile data in
+// clear text after SUNDAY exits.
 function loadCreateDefaults() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(CREATE_DEFAULTS_KEY) || 'null');
-    if (!raw || typeof raw !== 'object') return null;
-    return {
-      gender: CREATE_GENDERS.includes(raw.gender) ? raw.gender : 'Skip',
-      birthday: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.birthday)) ? String(raw.birthday) : null,
-    };
-  } catch (_) { return null; }
+  try { localStorage.removeItem(CREATE_DEFAULTS_KEY); } catch (_) { /* best-effort legacy cleanup */ }
+  return createSessionDefaults ? { ...createSessionDefaults } : null;
 }
 
 function saveCreateDefaults(d) {
-  try { localStorage.setItem(CREATE_DEFAULTS_KEY, JSON.stringify({ birthday: d.birthday, gender: d.gender })); } catch (_) { /* best-effort */ }
+  createSessionDefaults = {
+    gender: CREATE_GENDERS.includes(d.gender) ? d.gender : 'Skip',
+    birthday: /^\d{4}-\d{2}-\d{2}$/.test(String(d.birthday)) ? String(d.birthday) : null,
+  };
 }
 
 // Unambiguous glyphs only — no 0/O, 1/I/l — so a generated password reads

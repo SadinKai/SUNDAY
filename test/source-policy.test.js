@@ -145,6 +145,13 @@ test('remote fetch is centralized in the bounded policy module', () => {
   }
 });
 
+test('account-creation profile defaults are session-only', () => {
+  const renderer = read('src/renderer/app.js');
+  assert.match(renderer, /let createSessionDefaults = null/);
+  assert.match(renderer, /localStorage\.removeItem\(CREATE_DEFAULTS_KEY\)/);
+  assert.doesNotMatch(renderer, /localStorage\.setItem\(CREATE_DEFAULTS_KEY/);
+});
+
 test('retired destructive updater helpers are absent from the distribution tree', () => {
   for (const file of ['download.js', 'selfupdate.js', 'unzip.js', 'launcher.js', 'guard.js', 'clones.js']) {
     assert.equal(fs.existsSync(path.join(root, 'src/main', file)), false);
