@@ -1,7 +1,7 @@
 'use strict';
 function requireIsolatedVm() {
   if (process.env.SUNDAY_ISOLATED_VM !== '1') {
-    console.error('REFUSED: legacy integration tests run only in a disposable isolated VM with SUNDAY_ISOLATED_VM=1.');
+    console.error('REFUSED: native UI tests require a controlled isolated Windows test environment acknowledged with SUNDAY_ISOLATED_VM=1.');
     process.exit(2);
   }
 }

@@ -1,0 +1,102 @@
+/* SUNDAY Launcher — Solar Command Deck.
+   A warm, high-contrast desktop system built around one ember-orange brand
+   signal, compact operational type, and a disciplined 4px spacing grid. */
+
+:root {
+  --bg: #f4f0ea;
+  --rail: #ebe5dd;
+  --surface: #fffdf9;
+  --surface-2: #f2ece5;
+  --surface-3: #e7ddd3;
+  --hair: #ded4ca;
+  --hair-2: #c5b5a7;
+
+  --ink: #261c16;
+  --ink-2: #59493e;
+  --ink-3: #746257;
+  --ink-4: #948278;
+
+  --accent: #c9470d;
+  --accent-2: #e65a1c;
+  --accent-text: #8f2f08;
+  --accent-bg: #fff0e6;
+  --accent-ring: #d77a4e;
+  --accent-soft: #fff6ef;
+  --on-accent: #fffaf5;
+
+  --success: #147858; --success-text: #11674c; --success-bg: #e6f4ee; --success-ring: #77aa97;
+  --warning: #a75b08; --warning-text: #7c4105; --warning-bg: #fff2da; --warning-ring: #d29b50;
+  --danger: #b83d44;  --danger-text: #9e2c35;  --danger-bg: #fdecee;  --danger-ring: #d88489;
+  --info: #386a8c;    --info-text: #285672;    --info-bg: #e9f2f7;
+
+  --on-ink: #fffaf5;
+  --ink-inv: #1f1712;
+  --scroll: #c4b6ab; --scroll-hover: #a99384; --toggle-track: #b8aa9f;
+
+  --r-lg: 12px; --r: 8px; --r-sm: 5px; --r-pill: 999px;
+
+  /* Shadows exist ONLY for floating layers (menus, modals, palette, toasts).
+     Nothing in the page casts a shadow. */
+  --sh-card: 0 1px 2px rgba(0, 0, 0, .06), 0 8px 24px rgba(0, 0, 0, .04);
+  --sh-float: 0 14px 36px rgba(0, 0, 0, .2), 0 2px 8px rgba(0, 0, 0, .12);
+  --sh-lg: 0 22px 64px rgba(0, 0, 0, .24), 0 5px 16px rgba(0, 0, 0, .14);
+
+  --rail-w: 232px;
+  --view-max-w: 1120px;
+  --space-page-x: 36px;
+  --space-page-y: 32px;
+  --space-page-bottom: 48px;
+  --space-card: 18px;
+  --space-card-x: 20px;
+  --space-grid: 14px;
+  --control-h: 34px;
+  --control-h-sm: 30px;
+  --control-h-lg: 38px;
+  --icon-btn: 34px;
+
+  --motion-fast: .12s;
+  --motion-med: .18s;
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --font-display: "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-brand: "Bahnschrift SemiCondensed", "Bahnschrift", "Segoe UI Variable Display", sans-serif;
+  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+
+  --ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+/* Eclipse: warmer blacks and a brighter solar signal. */
+:root[data-theme="dark"] {
+  --bg: #0d0b0a;
+  --rail: #12100e;
+  --surface: #181512;
+  --surface-2: #201b17;
+  --surface-3: #2a231d;
+  --hair: #302820;
+  --hair-2: #49392e;
+
+  --ink: #fff8f1;
+  --ink-2: #cbbdb1;
+  --ink-3: #a49488;
+  --ink-4: #74675e;
+
+  --accent: #f26a2e;
+  --accent-2: #ff8950;
+  --accent-text: #ffb58c;
+  --accent-bg: #32170c;
+  --accent-ring: #8c3e1e;
+  --accent-soft: #25140d;
+  --on-accent: #211008;
+
+  --success: #4fb98d; --success-text: #8bd8b7; --success-bg: #10271f; --success-ring: #275f4a;
+  --warning: #e19a3a; --warning-text: #f2bd72; --warning-bg: #2c1e0c; --warning-ring: #6f4a1d;
+  --danger: #ec6870;  --danger-text: #ff9da3;  --danger-bg: #311315;  --danger-ring: #713036;
+  --info: #76a7c5;    --info-text: #a9cee4;    --info-bg: #14252e;
+
+  --on-ink: #fffaf5;
+  --ink-inv: #18110d;
+  --scroll: #3b3028; --scroll-hover: #59463a; --toggle-track: #44372e;
+  --sh-card: 0 1px 0 rgba(255, 255, 255, .018), 0 10px 28px rgba(0, 0, 0, .12);
+  --sh-float: 0 14px 36px rgba(0, 0, 0, .48), 0 2px 8px rgba(0, 0, 0, .28);
+  --sh-lg: 0 22px 64px rgba(0, 0, 0, .58), 0 5px 16px rgba(0, 0, 0, .34);
+}
+:root[data-theme="dark"] ::selection { background: rgba(242, 106, 46, .42); }

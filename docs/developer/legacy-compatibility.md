@@ -4,15 +4,18 @@ SUNDAY provides two explicit adapter states.
 
 ## Safe default
 
-Without `LEGACY_COMPAT=1`, startup selects
-`UnavailableRobloxIsolationAdapter`. Account selection and launch planning remain
-available, but no Roblox ticket is resolved and no client is spawned.
+Without either the saved multi-instance preference or exact
+`LEGACY_COMPAT=1` override, startup selects
+`UnavailableRobloxIsolationAdapter`. Account selection and launch planning
+remain available, but no Roblox ticket is resolved and no client is spawned.
 
 ## Legacy compatibility mode
 
-When the SUNDAY process inherits exactly `LEGACY_COMPAT=1`, startup selects
-`LegacyRobloxIsolationAdapter` and the UI displays **LEGACY MULTI-INSTANCE
-MODE**.
+On current source builds, a saved `multiInstanceMode: true` preference selects
+`LegacyRobloxIsolationAdapter` at startup. The exact `LEGACY_COMPAT=1`
+environment value remains a backward-compatible override. In either case the
+UI displays **LEGACY MULTI-INSTANCE MODE** only after the backend confirms the
+legacy adapter is selected.
 
 The adapter preserves the established:
 
@@ -44,5 +47,11 @@ follow Roblox's terms and applicable rules.
 
 Automated tests use synthetic fixtures for normal directories, directory
 reparse points, regular files, invalid `content` shapes, slot reuse, stale
-leases, sibling preservation, and process identity. Live drivers are manual and
-must run only in a disposable Windows VM as described in [Testing](testing.md).
+leases, sibling preservation, and process identity. Live drivers are manual,
+can launch Roblox, and require authorized accounts plus controlled disposable
+state as described in [Testing](testing.md).
+
+The packaged legacy path was live-qualified before this public-polish task. The
+result is not a permanent guarantee: Roblox updates, local installation shape,
+and Windows environment can invalidate it. This task does not claim a new live
+qualification run.

@@ -68,6 +68,7 @@ function windowCall(method) {
 window.sunday = {
   status: () => tauriInvoke('app_status'),
   adapterSelection: () => tauriInvoke('adapter_selection_status'),
+  restart: () => tauriInvoke('app_restart'),
   detect: () => tauriInvoke('roblox_detect'),
   ui: {
     clipboard: readClipboard,

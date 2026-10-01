@@ -2,47 +2,87 @@
 
 ### A Roblox account manager and multi-instance launcher for Windows.
 
-SUNDAY lets you manage multiple Roblox accounts, sign into them, and launch
-multiple Roblox clients at the same time from one desktop app.
+SUNDAY lets you manage multiple Roblox accounts, sign in, launch multiple
+Roblox clients, and control active clients from one desktop app.
 
 **One app. Multiple accounts. Multiple Roblox clients.**
 
 [Download](https://github.com/SadinKai/SUNDAY/releases) ·
-[Documentation](docs/getting-started.md) ·
+[Documentation](docs/README.md) ·
+[Privacy](PRIVACY.md) ·
 [Report a bug](https://github.com/SadinKai/SUNDAY/issues/new?template=bug_report.yml)
 
-> **Screenshot pending:** the repository does not yet contain a tracked
-> screenshot of the current SUNDAY Launch workflow.
-
-## What is SUNDAY?
-
-SUNDAY is a Windows desktop launcher built for people who use more than one
-Roblox account.
-
-- **Manage multiple accounts** in one place
-- **Sign in and switch between accounts** quickly
-- **Launch multiple Roblox clients** at the same time
-- **See and control your active clients** from one dashboard
-- **Browse Roblox games and players** without leaving SUNDAY
+![SUNDAY Launch workflow showing client selection, destination, launch review, and active clients](docs/assets/sunday-launch-workflow.png)
 
 > Multi-instance launching is an explicitly enabled compatibility feature.
 > SUNDAY is an independent project and is not affiliated with or endorsed by
 > Roblox Corporation.
 
-## How it works
+## What you can do
 
-1. Add your Roblox accounts
-2. Select the accounts you want to use
-3. Choose what to launch
-4. Start your Roblox clients
-5. Manage all active clients from SUNDAY
+- **Manage multiple accounts** in one place.
+- **Sign in and switch accounts** without juggling browser profiles.
+- **Choose a game or destination** from SUNDAY.
+- **Launch multiple Roblox clients** through the opt-in compatibility mode.
+- **See, focus, restart, or stop active clients** from one dashboard.
+- **Browse Roblox games and players** without leaving the app.
 
-## Why SUNDAY?
+## Install SUNDAY
 
-Managing several Roblox accounts shouldn't mean juggling a pile of browser
-windows, shortcuts, and separate sessions.
+1. Open [GitHub Releases](https://github.com/SadinKai/SUNDAY/releases).
+2. Download `SundayInstaller.exe` from the latest release.
+3. Run the installer, then open **SUNDAY**.
 
-SUNDAY puts your accounts and clients into one place.
+The initial v1.8.14 Windows binaries are unsigned, so Windows SmartScreen may
+show a warning. The portable `SundayPortable_1.8.14_x64.zip` is available on
+the same release page. SUNDAY supports Windows 10 or later on x64 and requires
+Microsoft WebView2 Runtime.
+
+## Add an account and launch
+
+1. Open **Accounts** and choose **Add account**.
+2. Sign in through the temporary Roblox window.
+3. Return to **Launch** and select one or more accounts.
+4. Choose a destination, review the launch, and select **Launch**.
+5. Use **Active clients** to focus, restart, or stop clients SUNDAY launched.
+
+Account metadata stays local. Roblox session material is protected for the
+current Windows user with Windows DPAPI and is not exposed in ordinary renderer
+state. Read [Privacy](PRIVACY.md) for the complete current behavior.
+
+## Enable multi-instance mode
+
+Multi-instance mode is disabled by default and uses SUNDAY's existing legacy
+Roblox compatibility adapter.
+
+1. Open **Settings**.
+2. Select **Multi-instance**.
+3. Turn on **Enable multi-instance mode** and save.
+4. Restart SUNDAY when prompted.
+5. Confirm **LEGACY MULTI-INSTANCE MODE** appears before launching.
+
+> The Settings control is present in current source builds. The already
+> published v1.8.14 binaries predate this UI and still use the documented
+> `LEGACY_COMPAT=1` startup override. This repository change does not replace or
+> silently update an installed v1.8.14 build.
+
+Turning the setting off and restarting returns SUNDAY to its fail-closed
+planning-only mode. The legacy `LEGACY_COMPAT=1` environment override remains
+available for backward-compatible developer workflows. See
+[Multi-instance mode](docs/user/multi-instance.md) for limitations and recovery
+steps.
+
+## Troubleshooting
+
+- **Waiting for isolated environment:** enable multi-instance mode in Settings,
+  save, and restart SUNDAY; otherwise continue in planning-only mode.
+- **Roblox is not detected:** choose the installed `RobloxPlayerBeta.exe` in
+  Settings.
+- **A session expired:** open Accounts and choose **Sign in again**.
+- **SmartScreen appears:** v1.8.14 is intentionally unsigned. Verify the file
+  came from the canonical Releases page and compare its published SHA-256 hash.
+
+See [Troubleshooting](docs/user/troubleshooting.md) for more help.
 
 ## Project status
 
@@ -51,36 +91,37 @@ SUNDAY puts your accounts and clients into one place.
 ![Version](https://img.shields.io/badge/version-1.8.14-7A5AF8)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## Technical details
+Roblox compatibility can change outside this project's control. The legacy
+path is bounded to three client slots and is not vendor-supported isolation or
+a performance guarantee. Use only accounts, installations, and processes you
+own or are authorized to operate.
 
-| Area | Capability |
-| --- | --- |
-| Accounts | Stores account metadata locally and protects active Roblox sessions with Windows DPAPI. |
-| Discovery | Browses bounded Roblox game, server, people, and presence data. |
-| Processes | Observes clients and authorizes focus, stop, and restart through opaque process capabilities. |
-| Coordination | Maintains one authoritative desktop instance and durable launch-plan state. |
-| Compatibility | Offers an explicit, disabled-by-default legacy path for up to three client slots. |
-| Distribution | Builds a portable application plus a fail-closed standalone installer and release manifest. |
+## Documentation
 
-## Supported platform
+The [documentation index](docs/README.md) separates user guidance from
+developer and release-engineering material.
 
-- Windows 10 or later, x64
-- Microsoft WebView2 Runtime
-- Roblox desktop client, when Roblox workflows are used
+For users:
 
-macOS and Linux are not supported. Roblox compatibility can change outside this
-project's control; this repository does not claim vendor-supported isolation.
+- [Getting started](docs/user/getting-started.md)
+- [Accounts and sign-in](docs/user/accounts.md)
+- [Multi-instance mode](docs/user/multi-instance.md)
+- [Troubleshooting](docs/user/troubleshooting.md)
+- [Privacy](PRIVACY.md) and [Support](SUPPORT.md)
 
-## Requirements
+For contributors:
 
-- Node.js 22.23.x
-- Rust 1.96.0 with `x86_64-pc-windows-msvc`, `rustfmt`, and `clippy`
-- Visual Studio C++ Build Tools and a Windows SDK
-- PowerShell 7 or Windows PowerShell 5.1
+- [Architecture](docs/developer/architecture.md)
+- [Development](docs/developer/development.md)
+- [Testing and evidence levels](docs/developer/testing.md)
+- [Legacy compatibility boundary](docs/developer/legacy-compatibility.md)
+- [Release engineering](docs/developer/release.md)
+- [Contributing](CONTRIBUTING.md) and [Security policy](SECURITY.md)
 
-The committed npm and Cargo lockfiles are the dependency source of truth.
+## Build from source
 
-## Quick start
+SUNDAY uses Node.js 22.23.x, Rust 1.96.0 with the MSVC toolchain, the Windows
+SDK, Visual Studio C++ Build Tools, and WebView2. Lockfiles are authoritative.
 
 ```powershell
 git clone https://github.com/SadinKai/SUNDAY.git
@@ -90,143 +131,26 @@ npm test
 npm run start
 ```
 
-Development startup does not enable Roblox execution automatically. See
-[Getting started](docs/getting-started.md) and
-[Development](docs/development.md) before enabling native or live tests.
+The default adapter refuses to spawn Roblox until multi-instance mode is
+explicitly enabled. Build, packaging, installer, and qualification commands are
+documented in [Development](docs/developer/development.md) and
+[Testing](docs/developer/testing.md).
 
-## Runtime modes
+## Security model
 
-The default adapter is `UnavailableRobloxIsolationAdapter`. It preserves launch
-planning while refusing to spawn Roblox.
+- Destructive process actions require a current opaque capability tied to
+  process creation identity and canonical executable path; PID alone is not
+  authorization.
+- SUNDAY never adopts a Roblox client it did not launch.
+- Session material is DPAPI-protected and temporary sign-in profiles are
+  purged.
+- Network and installer inputs are bounded and validated.
+- Automatic updater installation is not active in v1.8.14. **View releases**
+  opens the canonical GitHub page for a manual download.
 
-`LEGACY_COMPAT=1` must be inherited by the SUNDAY process to select
-`LegacyRobloxIsolationAdapter`. The UI then displays **LEGACY MULTI-INSTANCE
-MODE**. Values such as `true`, `yes`, or `0` do not enable it.
-
-```powershell
-$env:LEGACY_COMPAT = '1'
-npm run start
-```
-
-Legacy mode is an unsupported compatibility mechanism, not a general security
-boundary or a claim of official multi-instance support. Use only accounts,
-installations, and processes you are authorized to operate. Read
-[Compatibility](docs/compatibility.md) for the exact boundary.
-
-## Development, build, and test
-
-```powershell
-npm ci
-npm test
-npm audit --omit=dev --audit-level=moderate
-
-cargo check --locked --manifest-path src-tauri/Cargo.toml
-cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
-
-cargo check --locked --manifest-path installer/Cargo.toml
-cargo clippy --locked --manifest-path installer/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --locked --manifest-path installer/Cargo.toml
-
-cargo audit --file src-tauri/Cargo.lock
-cargo audit --file installer/Cargo.lock
-
-npm run dist
-npm run release:package
-npm run audit:artifacts
-```
-
-`npm run dist` produces `dist/Sunday/Sunday.exe`,
-`dist/SundayInstaller.exe`, and `dist/SundayUninstall.exe`.
-`npm run release:package` adds the portable archive and release inventory needed
-by the artifact audit. Generated output is ignored and must not be committed.
-Unsigned development artifacts are not production releases.
-
-See [Testing](docs/testing.md) for automated, isolated-VM, packaging, and
-optional live-test boundaries. See [Release engineering](docs/release.md) for
-the signing and manifest workflow.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    UI[Renderer UI] -->|bounded IPC| Shell[Tauri shell]
-    Shell -->|JSON RPC| Backend[Node backend]
-    Backend --> State[Durable local state]
-    Backend --> Coordinator[Launch coordinator]
-    Coordinator --> Adapter[Isolation adapter]
-    Adapter --> Default[Unavailable by default]
-    Adapter --> Legacy[Legacy adapter when LEGACY_COMPAT=1]
-    Backend --> Native[Windows process and DPAPI services]
-```
-
-The process capability model separates observation from ownership. Numeric PIDs
-alone never authorize destructive actions. The complete component and trust
-boundary description is in [Architecture](docs/architecture.md).
-
-## Accounts and sessions
-
-Account metadata is local. Active session material is protected with Windows
-DPAPI for the current Windows user. Sign-in uses an origin-restricted temporary
-WebView profile, which is purged after completion. Never place cookies, account
-records, runtime databases, or diagnostic exports in issues or commits.
-
-## Security model and limitations
-
-- Roblox execution is unavailable by default.
-- Process actions require a current capability bound to creation identity and
-  canonical executable path.
-- HTTP requests use centralized HTTPS, host, redirect, media-type, timeout, and
-  response-size policies.
-- The installer accepts a fresh dedicated destination and applies archive and
-  reparse-point checks.
-- Release signing is fail-closed when production signing is required.
-- The in-application updater remains unavailable until its complete trust chain
-  is qualified.
-
-These controls reduce specific risks; they do not make the application, host,
-or Roblox account invulnerable. Review [SECURITY.md](SECURITY.md) before
-reporting a vulnerability.
-
-## Migration support
-
-The SUNDAY identity is canonical: `Sunday.exe` and
-`com.sadinkai.sundaylauncher`. Narrow compatibility modules import supported
-state and installer ownership records from the former product identity without
-making that identity current. See [Migration](docs/migration.md).
-
-## Troubleshooting
-
-- **Waiting for isolated environment:** restart SUNDAY from a process that
-  inherits exactly `LEGACY_COMPAT=1`, or continue in the safe default mode.
-- **Roblox is not detected:** select the installed `RobloxPlayerBeta.exe` in
-  Settings.
-- **A session expired:** use **Sign in again** for that account.
-- **Build tools are missing:** verify Node, Rust/MSVC, the Windows SDK, and
-  WebView2 against [Development](docs/development.md).
-
-More cases are covered in [Troubleshooting](docs/troubleshooting.md).
-
-## FAQ
-
-**Is SUNDAY an official Roblox launcher?**
-
-No. It is an independent desktop project.
-
-**Does SUNDAY launch multiple clients by default?**
-
-No. The default adapter refuses Roblox execution. The legacy adapter requires
-the exact explicit opt-in described above.
-
-**Are signing keys included?**
-
-No. Production signing and release-manifest private keys must be supplied by a
-controlled release environment and are never committed.
-
-**Can I run the live Roblox tests on my normal profile?**
-
-Do not. They are manual qualification tools intended for a disposable Windows
-VM with disposable data.
+These controls reduce specific risks; they do not make the host or an account
+invulnerable. Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md).
 
 ## Origin and Attribution
 
@@ -241,13 +165,6 @@ SUNDAY project by SADINKAI, including architecture, security hardening,
 compatibility, UI/UX, packaging, testing, and release tooling. SUNDAY is not an
 official Fleet successor and no upstream endorsement is implied. See
 [NOTICE.md](NOTICE.md) for the concise provenance record.
-
-## Contributing, support, and security
-
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
-- Use [SUPPORT.md](SUPPORT.md) to choose the right support channel.
-- Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) in project spaces.
-- Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -8,7 +8,8 @@ SUNDAY uses distinct evidence labels:
 - **Behaviorally verified:** a host-safe test exercises it.
 - **Windows verified:** native behavior passed in an isolated Windows setup.
 - **Roblox verified:** an authorized disposable Roblox test passed.
-- **Release verified:** the exact signed artifact graph passed release checks.
+- **Release verified:** the exact published or candidate artifact graph passed
+  its declared release checks. State separately whether it was signed.
 
 One tier never implies another.
 
@@ -49,8 +50,9 @@ npm run test:release-manifest
 ```
 
 Packaging tests inspect naming, architecture, version resources, expected
-payloads, archive safety, manifest signatures, and byte identity. A local
-unsigned artifact is development evidence only.
+payloads, archive safety, manifest behavior, and byte identity. The public
+v1.8.14 assets are intentionally unsigned; a locally rebuilt artifact is still
+not evidence about the bytes published on GitHub.
 
 ## Single-instance and UI smoke tests
 
@@ -65,7 +67,8 @@ npm run test:ui:isolated-vm
 
 The UI drivers require an exact packaged executable and, where documented by the
 driver, an already-running process with a dedicated local debugging endpoint.
-Use a disposable VM or snapshot.
+Use a controlled Windows environment and a dedicated disposable user-data
+directory. A VM or snapshot is recommended when host state cannot be isolated.
 
 ## Legacy compatibility tests
 
@@ -78,9 +81,15 @@ npm run test:legacy-singleclient
 npm run test:legacy-multiclient
 ```
 
-These commands can start Roblox. Run them only in a disposable Windows VM with
-disposable accounts and no valuable Roblox process, cookie, install, or user
-data. They are never part of CI or a normal build.
+These commands can start Roblox. Run them only with explicit authorization,
+test accounts, and no valuable Roblox process, cookie, or user data in scope. A
+disposable VM remains the preferred isolation when available, but the evidence
+requirement is controlled, disposable state—not a claim that a VM alone makes
+the test safe. They are never part of CI or a normal build.
+
+The packaged legacy path was live-qualified before the current public-polish
+work. That evidence is build-, Roblox-version-, and environment-specific. No
+source, CI, packaging, or UI-smoke pass renews it after Roblox changes.
 
 No live Roblox test is implied by a source, CI, packaging, or smoke-test pass.
 

@@ -34,27 +34,43 @@ const { planServerFill } = require('./server-fill-planner');
 
 function asInt(v) { const n = parseInt(v, 10); return Number.isNaN(n) ? null : n; }
 
+function resolveLegacyCompatibility(settings, environment) {
+  const sourceEnvironment = environment || {};
+  const environmentValue = Object.prototype.hasOwnProperty.call(sourceEnvironment, 'LEGACY_COMPAT')
+    ? String(sourceEnvironment.LEGACY_COMPAT)
+    : 'ABSENT';
+  const environmentEnabled = legacyCompatRequested(sourceEnvironment);
+  const settingEnabled = !!(settings && settings.multiInstanceMode === true);
+  const enabled = environmentEnabled || settingEnabled;
+  return Object.freeze({
+    enabled,
+    environmentEnabled,
+    environmentValue,
+    settingEnabled,
+    activationSource: environmentEnabled ? 'environment' : (settingEnabled ? 'settings' : 'none'),
+    selectorEnvironment: Object.freeze(enabled ? { LEGACY_COMPAT: '1' } : {}),
+  });
+}
+
 function makeBackend(ctx) {
   const { appVersion, userData, emit, openPath, openExternal, pickFile, safeStorage } = ctx;
 
   logger.configure(userData);
   const ownerId = crypto.randomBytes(16).toString('hex');
-  // Capture the process-start value once. The selector and every diagnostic
-  // below use this same immutable snapshot, so later code cannot overwrite or
-  // reinterpret the opt-in after adapter selection.
-  const adapterEnvironment = Object.freeze(Object.prototype.hasOwnProperty.call(process.env, 'LEGACY_COMPAT')
+  // Capture the process-start value once. The persisted user preference is
+  // loaded before adapter selection and is translated into the same exact
+  // selector input as LEGACY_COMPAT=1. Later code cannot switch adapters in a
+  // running process; changing the preference requires a controlled restart.
+  const externalAdapterEnvironment = Object.freeze(Object.prototype.hasOwnProperty.call(process.env, 'LEGACY_COMPAT')
     ? { LEGACY_COMPAT: String(process.env.LEGACY_COMPAT) }
     : {});
-  const legacyCompatEnabled = legacyCompatRequested(adapterEnvironment);
   const legacyReason = "LEGACY MULTI-INSTANCE MODE: Uses SUNDAY Launcher's legacy compatibility mechanism. This is not vendor supported isolation.";
   const gates = new CapabilityGates({
     singleOwner: { state: STATES.ACTIVE, reason: 'The Tauri single-instance broker owns this backend.' },
     processControl: { state: STATES.PREPARING, reason: 'Native process identity validation is initializing.' },
     robloxIsolation: {
-      state: legacyCompatEnabled ? STATES.ACTIVE : STATES.UNAVAILABLE,
-      reason: legacyCompatEnabled
-        ? legacyReason
-        : 'Multi-instance launch is disabled until an ownership-preserving Roblox isolation mechanism is independently qualified.',
+      state: STATES.UNAVAILABLE,
+      reason: 'Multi-instance mode is disabled. Enable it in Settings, then restart SUNDAY.',
     },
     updaterApply: {
       state: STATES.UNAVAILABLE,
@@ -62,6 +78,11 @@ function makeBackend(ctx) {
     },
   });
   store.configure(userData, logger, { assertOwner: () => gates.require('singleOwner') });
+  const settings = store.getSettings();
+  const legacyCompatibility = resolveLegacyCompatibility(settings, externalAdapterEnvironment);
+  if (legacyCompatibility.enabled) {
+    gates.set('robloxIsolation', STATES.ACTIVE, legacyReason);
+  }
 
   // Update application is intentionally unavailable until a pinned signing
   // key, monotonic manifest and side-by-side rollback path are provisioned.
@@ -129,12 +150,11 @@ function makeBackend(ctx) {
   games.configure({ logger });
   people.configure({ logger });
 
-  const settings = store.getSettings();
   let monitor = new ProcessMonitor({ intervalMs: settings.pollIntervalMs, logger, capabilities: processCapabilities });
   const isolationReason = gates.get('robloxIsolation').reason;
   const isolationAdapter = selectRobloxIsolationAdapter({
     reason: isolationReason,
-    environment: adapterEnvironment,
+    environment: legacyCompatibility.selectorEnvironment,
     legacyOptions: {
       logger,
       nativeApi: native,
@@ -146,7 +166,12 @@ function makeBackend(ctx) {
       locateRoblox: () => roblox.locate(store.getSettings()),
     },
   });
-  const adapterSelection = Object.freeze(adapterSelectionDiagnostics(isolationAdapter));
+  const adapterSelection = Object.freeze(Object.assign(adapterSelectionDiagnostics(isolationAdapter), {
+    legacyCompatEnvironmentValue: legacyCompatibility.environmentValue,
+    legacyCompatEnvironmentEnabled: legacyCompatibility.environmentEnabled,
+    legacyCompatSettingEnabled: legacyCompatibility.settingEnabled,
+    legacyCompatActivationSource: legacyCompatibility.activationSource,
+  }));
   logger.info('Roblox isolation adapter selected', adapterSelection);
   const launchPlans = new LaunchPlanStore({ database: store.database() });
   const launchPlanner = new LaunchPlanner();
@@ -183,7 +208,7 @@ function makeBackend(ctx) {
         },
       };
     },
-    operationTimeoutMs: legacyCompatEnabled ? 90000 : 30000,
+    operationTimeoutMs: legacyCompatibility.enabled ? 90000 : 30000,
   });
   launchCoordinator.on('update', plan => emit('launch-plan:update', plan));
 
@@ -494,7 +519,7 @@ function makeBackend(ctx) {
     async keeper_disarm_all() { return keeper.disarmAll('stopped by user'); },
     async keeper_status() { return keeper.status(); },
     async legacy_test_crash_owned(payload) {
-      if (!legacyCompatEnabled || process.env.SUNDAY_LEGACY_TEST_MODE !== '1') {
+      if (!legacyCompatibility.enabled || process.env.SUNDAY_LEGACY_TEST_MODE !== '1') {
         return { ok: false, error: 'The exact-owned legacy test hook is disabled.' };
       }
       const capability = String(payload.capability || '');
@@ -612,10 +637,21 @@ function makeBackend(ctx) {
       }
       const settings = store.saveSettings(partial);
       if (settings.pollIntervalMs !== before.pollIntervalMs) monitor.setPollInterval(settings.pollIntervalMs);
-      return { ok: true, settings };
+      return {
+        ok: true,
+        settings,
+        restartRequired: settings.multiInstanceMode !== before.multiInstanceMode,
+      };
     },
     async settings_reset() {
-      const settings = store.resetSettings(); monitor.setPollInterval(settings.pollIntervalMs); return { ok: true, settings };
+      const before = store.getSettings();
+      const settings = store.resetSettings();
+      monitor.setPollInterval(settings.pollIntervalMs);
+      return {
+        ok: true,
+        settings,
+        restartRequired: settings.multiInstanceMode !== before.multiInstanceMode,
+      };
     },
     async settings_browse() {
       const picked = await pickFile();
@@ -655,6 +691,9 @@ function makeBackend(ctx) {
           multiInstance: gates.get('robloxIsolation').state + ': ' + gates.get('robloxIsolation').reason,
           legacyCompatEnabled: adapterSelection.legacyCompatEnabled,
           legacyCompatEnvironmentValue: adapterSelection.legacyCompatEnvironmentValue,
+          legacyCompatEnvironmentEnabled: adapterSelection.legacyCompatEnvironmentEnabled,
+          legacyCompatSettingEnabled: adapterSelection.legacyCompatSettingEnabled,
+          legacyCompatActivationSource: adapterSelection.legacyCompatActivationSource,
           selectedAdapter: adapterSelection.selectedAdapter,
           isolationState: adapterSelection.isolationState,
           isolationReason: adapterSelection.reason,
@@ -715,4 +754,4 @@ function makeBackend(ctx) {
   return { invoke, shutdown };
 }
 
-module.exports = { makeBackend };
+module.exports = { makeBackend, resolveLegacyCompatibility };

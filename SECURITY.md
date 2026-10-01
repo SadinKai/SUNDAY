@@ -3,13 +3,13 @@
 ## Supported versions
 
 Security fixes target the default branch and the latest published release, when
-one exists. Older release lines are not actively maintained. Before the first
-public release, reports should identify the affected commit on `main`.
+one exists. Older release lines are not actively maintained. Reports against
+unreleased source should identify the affected commit on `main`.
 
 | Version | Support |
 | --- | --- |
 | Latest published release | Supported |
-| `main` before the first release | Supported for coordinated fixes |
+| Current `main` | Supported for coordinated fixes |
 | Older releases and private development builds | Not actively supported |
 
 ## Report a vulnerability privately
@@ -42,10 +42,12 @@ should wait until affected users have a reasonable opportunity to update.
 ## Scope and important boundaries
 
 - Roblox execution is unavailable by default.
-- `LEGACY_COMPAT=1` enables an unsupported compatibility path; it is not
-  vendor-supported isolation.
+- The saved multi-instance setting or exact `LEGACY_COMPAT=1` override enables
+  the same bounded compatibility path; it is not vendor-supported isolation.
 - Process control requires current ownership and identity evidence.
-- Production signing is fail-closed; development artifacts may be unsigned.
+- Public v1.8.14 binaries are intentionally unsigned. Checksums establish byte
+  integrity, not publisher identity; signing inputs remain fail-closed when a
+  build explicitly requires them.
 - The in-application updater remains unavailable until its complete trust chain
   is qualified.
 
