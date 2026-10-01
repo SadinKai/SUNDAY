@@ -31,7 +31,7 @@
                     "test:legacy-multiclient": "node scripts/test-legacy-multiclient.mjs"
                 },
     "dependencies":  {
-                         "koffi":  "^2.9.0"
+                         "koffi":  "^3.3.2"
                      },
     "devDependencies":  {
                             "@tauri-apps/cli":  "^2.11.4"
