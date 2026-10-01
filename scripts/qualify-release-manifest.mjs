@@ -13,7 +13,7 @@ if (fs.existsSync(manifestPath)) {
 const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
 const baseEnvironment = {
   ...process.env,
-  SUNDAY_RELEASE_SEQUENCE: '1814',
+  SUNDAY_RELEASE_SEQUENCE: '1815',
   SUNDAY_RELEASE_PUBLIC_KEY_SPKI_B64: publicKey
     .export({ type: 'spki', format: 'der' })
     .toString('base64'),

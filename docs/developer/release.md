@@ -1,16 +1,16 @@
 # Release engineering
 
-SUNDAY v1.8.14 uses a straightforward unsigned GitHub release. A successful
+SUNDAY v1.8.15 uses a straightforward unsigned GitHub release. A successful
 source build is not public until the exact audited files are uploaded and their
 published checksums are verified.
 
 ## Canonical version and public files
 
-Version `1.8.14` is declared in `package.json`, both Cargo manifests, and
+Version `1.8.15` is declared in `package.json`, both Cargo manifests, and
 `src-tauri/tauri.conf.json`. The public release contains only:
 
 - `SundayInstaller.exe`;
-- `SundayPortable_1.8.14_x64.zip`; and
+- `SundayPortable_1.8.15_x64.zip`; and
 - `SHA256SUMS.txt`.
 
 Source archives generated automatically by GitHub are not SUNDAY build
@@ -37,16 +37,15 @@ checksum file after publication.
 
 ## Unsigned initial binaries
 
-The initial v1.8.14 Windows binaries are intentionally unsigned. Windows
+The v1.8.15 Windows binaries are intentionally unsigned. Windows
 SmartScreen may display a warning when the installer or application starts.
 Do not claim publisher identity, fabricate signatures, or bypass Windows
 security warnings.
 
 Checksums establish byte integrity only; they do not establish publisher
-identity. Future signing or isolation-provider work is not a prerequisite for
-this initial release.
+identity.
 
 ## Update status
 
-Automatic update application remains unavailable. Users download v1.8.14 from
+Automatic update application remains unavailable. Users download v1.8.15 from
 the canonical GitHub Releases page.

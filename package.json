@@ -1,6 +1,6 @@
 {
     "name":  "sunday-launcher",
-    "version": "1.8.14",
+    "version": "1.8.15",
     "description":  "SUNDAY Launcher - manage multiple Roblox accounts and launch multiple Roblox clients on Windows",
     "author":  "SADINKAI",
     "license":  "MIT",
@@ -28,7 +28,8 @@
                     "audit:artifacts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/audit-release-artifacts.ps1",
                     "test:single-instance": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-single-instance.ps1",
                     "test:legacy-singleclient": "node scripts/test-legacy-singleclient.mjs",
-                    "test:legacy-multiclient": "node scripts/test-legacy-multiclient.mjs"
+                    "test:legacy-multiclient": "node scripts/test-legacy-multiclient.mjs",
+                    "test:legacy-settings-packaged": "node scripts/qualify-settings-live.mjs"
                 },
     "dependencies":  {
                          "koffi":  "^2.9.0"

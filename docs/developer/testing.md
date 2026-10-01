@@ -50,8 +50,8 @@ npm run test:release-manifest
 ```
 
 Packaging tests inspect naming, architecture, version resources, expected
-payloads, archive safety, manifest behavior, and byte identity. The public
-v1.8.14 assets are intentionally unsigned; a locally rebuilt artifact is still
+payloads, archive safety, manifest behavior, and byte identity. The v1.8.15
+assets are intentionally unsigned; a locally rebuilt artifact is still
 not evidence about the bytes published on GitHub.
 
 ## Single-instance and UI smoke tests
@@ -87,9 +87,25 @@ disposable VM remains the preferred isolation when available, but the evidence
 requirement is controlled, disposable state—not a claim that a VM alone makes
 the test safe. They are never part of CI or a normal build.
 
-The packaged legacy path was live-qualified before the current public-polish
-work. That evidence is build-, Roblox-version-, and environment-specific. No
-source, CI, packaging, or UI-smoke pass renews it after Roblox changes.
+For v1.8.15, release qualification must start the exact packaged candidate
+without `LEGACY_COMPAT`, enable multi-instance mode in Settings, complete the
+controlled restart, and then exercise the authorized live client path. The
+environment-override drivers remain backward-compatibility checks; they do not
+substitute for the Settings-based packaged test.
+
+The guarded packaged Settings driver is invoked only for an explicitly
+authorized release qualification:
+
+```powershell
+$env:SUNDAY_LIVE_SETTINGS_QUALIFICATION = '1'
+$env:SUNDAY_TEST_EXE = (Resolve-Path 'dist/Sunday/Sunday.exe').Path
+Remove-Item Env:LEGACY_COMPAT -ErrorAction SilentlyContinue
+npm run test:legacy-settings-packaged
+```
+
+It writes a sanitized result to
+`artifacts/settings-live-qualification-v1.8.15.json`. Account identifiers,
+session material, and opaque capabilities are not included in that report.
 
 No live Roblox test is implied by a source, CI, packaging, or smoke-test pass.
 

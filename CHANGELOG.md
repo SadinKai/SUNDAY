@@ -2,6 +2,45 @@
 
 All notable changes to SUNDAY Launcher are documented in this file.
 
+## 1.8.15
+
+### Added
+
+- Added a disabled-by-default **Multi-instance mode** setting as the normal
+  user activation path for the existing legacy Roblox compatibility adapter.
+- Added a controlled SUNDAY restart prompt so adapter selection is applied only
+  at the next process start.
+- Added plain-language privacy, user, developer, troubleshooting, and release
+  documentation plus an updated public launch-workflow screenshot.
+
+### Changed
+
+- Split the renderer into responsibility-focused view, component, runtime, and
+  stylesheet modules while preserving its trust boundary and application
+  behavior.
+- Polished the current SUNDAY desktop interface, product copy, icons, and
+  public repository presentation.
+- Kept exact `LEGACY_COMPAT=1` support as a backward-compatible developer
+  override; ordinary users enable the mode in Settings and restart SUNDAY.
+- Expanded automated adapter-selection, persisted-setting, UI, source-policy,
+  security, packaging, and release validation for the new activation path.
+
+### Release boundaries
+
+- Multi-instance mode remains an unsupported compatibility mechanism rather
+  than vendor-supported isolation, and it stays disabled by default.
+- Automatic update installation remains unavailable; users download updates
+  manually from GitHub Releases.
+- The v1.8.15 Windows installer and portable archive are intentionally
+  unsigned. SHA-256 checksums provide byte-integrity evidence but do not
+  establish a Windows publisher identity.
+- The packaged v1.8.15 candidate passed the Settings-based live qualification
+  with one client, three concurrent clients, restart and slot reuse, sibling
+  preservation, teardown, clone cleanup, disable/restart, and exact
+  `LEGACY_COMPAT=1` compatibility semantics. This evidence remains specific to
+  the qualified build, Roblox version, authorized accounts, and Windows
+  environment.
+
 ## 1.8.14
 
 ### Changed

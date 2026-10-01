@@ -54,7 +54,7 @@ CDN hosts.
 The current code allows bounded HTTPS communication with Roblox domains and
 Roblox CDN domains. SUNDAY can also open allowlisted Roblox or GitHub pages in
 your browser when you explicitly choose those actions. The automatic updater is
-not active in the public v1.8.14 build; updates are downloaded manually from
+not active in the v1.8.15 build; updates are downloaded manually from
 GitHub Releases.
 
 SUNDAY does not send a Roblox authentication cookie to an analytics provider,
@@ -69,7 +69,7 @@ implementation does not upload the saved account database or Roblox session
 cookie to a third-party service. GitHub receives ordinary web requests only
 when you open a repository or release link, or if a future build is explicitly
 configured with a qualified update feed. That future update infrastructure is
-not active in v1.8.14.
+not active in v1.8.15.
 
 ## Logs and support
 

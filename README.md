@@ -33,8 +33,8 @@ Roblox clients, and control active clients from one desktop app.
 2. Download `SundayInstaller.exe` from the latest release.
 3. Run the installer, then open **SUNDAY**.
 
-The initial v1.8.14 Windows binaries are unsigned, so Windows SmartScreen may
-show a warning. The portable `SundayPortable_1.8.14_x64.zip` is available on
+The v1.8.15 Windows binaries are unsigned, so Windows SmartScreen may show a
+warning. The portable `SundayPortable_1.8.15_x64.zip` is available on
 the same release page. SUNDAY supports Windows 10 or later on x64 and requires
 Microsoft WebView2 Runtime.
 
@@ -61,14 +61,10 @@ Roblox compatibility adapter.
 4. Restart SUNDAY when prompted.
 5. Confirm **LEGACY MULTI-INSTANCE MODE** appears before launching.
 
-> The Settings control is present in current source builds. The already
-> published v1.8.14 binaries predate this UI and still use the documented
-> `LEGACY_COMPAT=1` startup override. This repository change does not replace or
-> silently update an installed v1.8.14 build.
-
 Turning the setting off and restarting returns SUNDAY to its fail-closed
 planning-only mode. The legacy `LEGACY_COMPAT=1` environment override remains
-available for backward-compatible developer workflows. See
+available only for backward-compatible developer workflows; the Settings flow
+above is the normal user workflow. See
 [Multi-instance mode](docs/user/multi-instance.md) for limitations and recovery
 steps.
 
@@ -79,7 +75,7 @@ steps.
 - **Roblox is not detected:** choose the installed `RobloxPlayerBeta.exe` in
   Settings.
 - **A session expired:** open Accounts and choose **Sign in again**.
-- **SmartScreen appears:** v1.8.14 is intentionally unsigned. Verify the file
+- **SmartScreen appears:** v1.8.15 is intentionally unsigned. Verify the file
   came from the canonical Releases page and compare its published SHA-256 hash.
 
 See [Troubleshooting](docs/user/troubleshooting.md) for more help.
@@ -88,7 +84,7 @@ See [Troubleshooting](docs/user/troubleshooting.md) for more help.
 
 [![CI](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4)
-![Version](https://img.shields.io/badge/version-1.8.14-7A5AF8)
+![Version](https://img.shields.io/badge/version-1.8.15-7A5AF8)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Roblox compatibility can change outside this project's control. The legacy
@@ -145,7 +141,7 @@ documented in [Development](docs/developer/development.md) and
 - Session material is DPAPI-protected and temporary sign-in profiles are
   purged.
 - Network and installer inputs are bounded and validated.
-- Automatic updater installation is not active in v1.8.14. **View releases**
+- Automatic updater installation is not active in v1.8.15. **View releases**
   opens the canonical GitHub page for a manual download.
 
 These controls reduce specific risks; they do not make the host or an account

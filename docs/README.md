@@ -23,5 +23,6 @@ Choose the path that matches what you are trying to do.
 - [Contributing](../CONTRIBUTING.md)
 - [Security policy](../SECURITY.md)
 
-Release notes remain versioned at the top of `docs/`, including
+Release notes remain versioned at the top of `docs`, including
+[v1.8.15](release-notes-v1.8.15.md) and the historical
 [v1.8.14](release-notes-v1.8.14.md).

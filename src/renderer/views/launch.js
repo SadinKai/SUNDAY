@@ -233,7 +233,7 @@ function instanceRuntimeStatus(s) {
   }
   if (legacyCompatibilityMode()) {
     return {
-      tone: 'good', icon: 'check-circle', label: 'Legacy mode active',
+      tone: 'good', icon: 'check-circle', label: 'LEGACY MULTI-INSTANCE MODE',
       detail: 'Ready for SUNDAY-managed clients', action: 'goto-diagnostics', actionLabel: 'Details',
     };
   }

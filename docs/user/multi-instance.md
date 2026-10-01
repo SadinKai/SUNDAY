@@ -12,9 +12,9 @@ is not an official Roblox feature.
 4. Select **Save settings**.
 5. Restart SUNDAY when prompted.
 
-The normal Settings control is present in current source builds. The already
-published v1.8.14 binaries predate it and still require the exact
-`LEGACY_COMPAT=1` startup override from the release notes.
+This Settings flow is the normal v1.8.15 activation path. The exact
+`LEGACY_COMPAT=1` startup override remains available for backward-compatible
+developer workflows.
 
 After restart, the Launch screen shows **LEGACY MULTI-INSTANCE MODE** when the
 legacy adapter was actually selected. Diagnostics shows the selected adapter
@@ -38,9 +38,8 @@ still blocks launch.
 Use only accounts, installations, and processes you own or are authorized to
 operate. Roblox updates can change compatibility outside SUNDAY's control.
 
-The packaged legacy path was live-qualified before this documentation update.
-That qualification is specific to the tested build, Roblox version, and
-Windows environment; it is not a permanent compatibility guarantee, and this
-documentation work did not rerun a live Roblox test.
+Live qualification is specific to the exact packaged build, Roblox version,
+accounts, and Windows environment. A source, UI-smoke, or synthetic test pass
+alone is not evidence that Roblox launched successfully.
 
 Developers can read the full [legacy compatibility boundary](../developer/legacy-compatibility.md).
