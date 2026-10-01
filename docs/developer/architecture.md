@@ -117,7 +117,7 @@ general-purpose remote navigation channel.
 ## Update and release trust
 
 The release-trust code can validate signed canonical manifests with monotonic
-sequence, publisher, key identifier, and artifact digests. The public v1.8.14
+sequence, publisher, key identifier, and artifact digests. The v1.8.15
 assets are intentionally unsigned and are distributed with SHA-256 checksums.
 The update coordinator cannot apply downloaded code merely because a public key
 exists. In-application update application remains unavailable until

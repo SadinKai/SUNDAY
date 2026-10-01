@@ -2,17 +2,17 @@
 
 ## The UI says waiting for isolated environment
 
-This is SUNDAY's safe default. In a current source build:
+This is SUNDAY's safe default. In v1.8.15:
 
 1. Open **Settings** and select **Multi-instance**.
 2. Turn on **Enable multi-instance mode** and save.
 3. Restart SUNDAY when prompted.
 4. Confirm **LEGACY MULTI-INSTANCE MODE** appears.
 
-The already published v1.8.14 binaries predate the Settings control. For those
-binaries, close SUNDAY and start it from a process that inherits exactly
-`LEGACY_COMPAT=1`. Values such as `true`, `yes`, and `0` do not enable the
-adapter. Developers can inspect the exact selection source in Diagnostics.
+The exact `LEGACY_COMPAT=1` environment override remains available for
+backward-compatible developer workflows. Values such as `true`, `yes`, and
+`0` do not enable that override. Developers can inspect the exact selection
+source in Diagnostics.
 
 ## The setting changed but the mode did not
 
@@ -51,7 +51,7 @@ issue, fixture, or configuration file.
 
 ## Windows SmartScreen shows a warning
 
-The initial public v1.8.14 installer and portable application are intentionally
+The v1.8.15 installer and portable application are intentionally
 unsigned. Download only from the canonical
 [Releases page](https://github.com/SadinKai/SUNDAY/releases) and compare the
 file's SHA-256 hash with the published `SHA256SUMS.txt`. A matching checksum
@@ -59,7 +59,7 @@ confirms byte integrity; it is not a publisher signature.
 
 ## Automatic updates are unavailable
 
-Automatic update installation is not active in v1.8.14. Use **View releases**
+Automatic update installation is not active in v1.8.15. Use **View releases**
 to open the canonical Releases page and download updates manually. SUNDAY does
 not claim that an unavailable updater installed anything.
 

@@ -424,6 +424,7 @@ test('multi-instance preference and privacy documentation keep secrets outside r
   assert.match(store, /multiInstanceMode: false/);
   assert.match(store, /s\.multiInstanceMode = s\.multiInstanceMode === true/);
   assert.match(backend, /const legacyCompatibility = resolveLegacyCompatibility\(settings, externalAdapterEnvironment\)/);
+  assert.match(read('src/renderer/views/launch.js'), /label: 'LEGACY MULTI-INSTANCE MODE'/);
   assert.doesNotMatch(settingsView, /\.ROBLOSECURITY|auth(?:entication)?Ticket|cookieValue/i);
   assert.match(privacy, /Windows DPAPI/);
   assert.match(privacy, /raw cookie is not returned to ordinary renderer UI state/);

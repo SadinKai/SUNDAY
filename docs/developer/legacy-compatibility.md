@@ -51,7 +51,16 @@ leases, sibling preservation, and process identity. Live drivers are manual,
 can launch Roblox, and require authorized accounts plus controlled disposable
 state as described in [Testing](testing.md).
 
-The packaged legacy path was live-qualified before this public-polish task. The
-result is not a permanent guarantee: Roblox updates, local installation shape,
-and Windows environment can invalidate it. This task does not claim a new live
-qualification run.
+The packaged v1.8.15 release candidate was live-qualified on 2026-10-02 using
+the normal Settings activation path with `LEGACY_COMPAT` absent. The run proved
+the default unavailable adapter, Settings persistence across controlled
+restart, the confirmed legacy-mode UI state, one owned client, three concurrent
+owned clients, client focus and stop, sibling preservation, restart and slot
+reuse, clone cleanup, disabling back to the unavailable adapter, and the exact
+`LEGACY_COMPAT=1` compatibility override semantics. No foreign Roblox process
+was adopted or terminated. The observed Roblox build was
+`version-02c37bc51a384b8f`.
+
+This evidence applies only to that packaged candidate, Roblox build, Windows
+environment, and authorized account set. Roblox updates, local installation
+shape, or Windows changes can invalidate it; it is not a permanent guarantee.

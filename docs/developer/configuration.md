@@ -49,7 +49,7 @@ adapter, and isolation reason through diagnostics.
 
 Never put real signing values into `.env.example`, GitHub issues, build logs, or
 source control. These inputs describe optional future controlled signing
-workflows; the public v1.8.14 binaries are unsigned. A build that explicitly
+workflows; the v1.8.15 binaries are unsigned. A build that explicitly
 requires signing still fails closed when its inputs are missing or invalid.
 
 ## Repository hygiene
