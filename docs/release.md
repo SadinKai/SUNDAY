@@ -1,67 +1,52 @@
 # Release engineering
 
-SUNDAY separates source verification, development packaging, and a signed
-release. A successful local build is not a production release.
+SUNDAY v1.8.14 uses a straightforward unsigned GitHub release. A successful
+source build is not public until the exact audited files are uploaded and their
+published checksums are verified.
 
-## Canonical version and names
+## Canonical version and public files
 
 Version `1.8.14` is declared in `package.json`, both Cargo manifests, and
-`src-tauri/tauri.conf.json`. Release outputs use:
+`src-tauri/tauri.conf.json`. The public release contains only:
 
-- `Sunday.exe`;
 - `SundayInstaller.exe`;
-- `SundayUninstall.exe`;
-- `SundayPortable_<version>_x64.zip`;
-- `sunday-release.json`.
+- `SundayPortable_1.8.14_x64.zip`; and
+- `SHA256SUMS.txt`.
 
-## Development package
+Source archives generated automatically by GitHub are not SUNDAY build
+artifacts. Local databases, account data, cookies, credentials, certificates,
+private keys, logs, and build residue must never be uploaded.
+
+## Build and verify
+
+From the exact merged `main` commit:
 
 ```powershell
 npm ci
+npm test
+npm audit --omit=dev --audit-level=moderate
 npm run dist
 npm run release:package
 npm run audit:artifacts
+npm run audit:release-secrets -- dist/Sunday release-assets
 ```
 
-This proves buildability and artifact structure. It does not provide publisher
-identity when signing is not required.
+Copy only the installer and portable ZIP into `release-assets`, then generate
+`SHA256SUMS.txt` from those two files. Verify the uploaded copies against that
+checksum file after publication.
 
-## Signed release workflow
+## Unsigned initial binaries
 
-The manually dispatched release workflow requires controlled Authenticode and
-manifest-signing secrets. Its order is:
+The initial v1.8.14 Windows binaries are intentionally unsigned. Windows
+SmartScreen may display a warning when the installer or application starts.
+Do not claim publisher identity, fabricate signatures, or bypass Windows
+security warnings.
 
-1. install locked dependencies and run source tests;
-2. check, lint, and test both Rust crates;
-3. build `Sunday.exe` and verify its signature;
-4. verify the bundled Node runtime signature;
-5. create and verify the standalone uninstaller;
-6. build the embedded payload and final installer;
-7. sign and verify the final installer;
-8. generate the portable archive, signed canonical manifest, dependency
-   inventories, and SHA-256 checksums;
-9. audit the exact artifact graph and attest uploaded assets.
-
-Signing failure is fatal. The workflow removes temporary certificate material in
-an unconditional cleanup step. No private signing material belongs in source or
-artifacts.
-
-## Reproducibility boundary
-
-Lockfiles, pinned toolchains, controlled GitHub actions, canonical scripts, and
-artifact inventories make dependency and build inputs reviewable. Authenticode
-timestamps, runner images, PE metadata, and compiler behavior may prevent
-bit-for-bit equality across independent builds. Do not claim deterministic
-binary reproducibility without separate evidence.
-
-## Checksums and signatures
-
-Checksums detect byte changes but do not independently establish publisher
-identity. Verify Authenticode signer, trust chain, timestamp, version resources,
-manifest signature, sequence, key identifier, and artifact digest together.
+Checksums establish byte integrity only; they do not establish publisher
+identity. Future signing or isolation-provider work is not a prerequisite for
+this initial release.
 
 ## Update status
 
-The application can validate signed release metadata, but automatic update
-application remains unavailable until its end-to-end activation and rollback
-path is qualified. Releases must not imply otherwise.
+Automatic update application remains unavailable. Users download v1.8.14 from
+the canonical GitHub Releases page.

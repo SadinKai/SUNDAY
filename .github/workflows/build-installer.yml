@@ -1,17 +1,10 @@
-name: Build signed Windows release
+name: Build unsigned Windows release
 
 on:
   workflow_dispatch:
-    inputs:
-      release_sequence:
-        description: Monotonic positive SUNDAY Launcher release sequence
-        required: true
-        type: string
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 jobs:
   build:
@@ -45,10 +38,15 @@ jobs:
       - name: Run safe verification suite
         run: npm test
 
+      - name: Audit production JavaScript dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+
       - name: Check Rust crates
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path installer/Cargo.toml --all -- --check
           cargo check --locked --manifest-path src-tauri/Cargo.toml
           cargo check --locked --manifest-path installer/Cargo.toml
           cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
@@ -56,97 +54,44 @@ jobs:
           cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
           cargo test --locked --manifest-path installer/Cargo.toml
 
-      - name: Materialize required signing certificate
-        shell: pwsh
-        env:
-          PFX_B64: ${{ secrets.CODESIGNING_PFX }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:PFX_B64)) { throw 'CODESIGNING_PFX is required for release builds.' }
-          $pfxPath = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetRandomFileName() + '.pfx')
-          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:PFX_B64))
-          "SUNDAY_CODESIGN_PFX=$pfxPath" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          "SUNDAY_REQUIRE_SIGNING=1" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build and sign inner and outer executables
-        env:
-          SUNDAY_CODESIGN_PASSWORD: ${{ secrets.CODESIGNING_PFX_PASSWORD }}
-          SUNDAY_RELEASE_PUBLIC_KEY_SPKI_B64: ${{ vars.SUNDAY_RELEASE_PUBLIC_KEY_SPKI_B64 }}
-          SUNDAY_RELEASE_PUBLISHER: ${{ vars.SUNDAY_RELEASE_PUBLISHER }}
-          SUNDAY_RELEASE_MANIFEST_URL: ${{ vars.SUNDAY_RELEASE_MANIFEST_URL }}
+      - name: Build unsigned Windows distribution
         run: npm run dist
 
-      - name: Generate portable archive and release inventory
+      - name: Generate portable archive
         run: npm run release:package
 
-      - name: Generate and verify signed canonical release manifest
-        env:
-          SUNDAY_RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
-          SUNDAY_RELEASE_PRIVATE_KEY_PKCS8_B64: ${{ secrets.SUNDAY_RELEASE_PRIVATE_KEY_PKCS8_B64 }}
-          SUNDAY_RELEASE_PUBLIC_KEY_SPKI_B64: ${{ vars.SUNDAY_RELEASE_PUBLIC_KEY_SPKI_B64 }}
-          SUNDAY_RELEASE_PUBLISHER: ${{ vars.SUNDAY_RELEASE_PUBLISHER }}
-          SUNDAY_RELEASE_KEY_ID: ${{ vars.SUNDAY_RELEASE_KEY_ID }}
-        run: |
-          npm run release:manifest
-          npm run release:verify
+      - name: Audit generated artifacts
+        run: npm run audit:artifacts
 
-      - name: Verify signatures, versions, and embedded payload identity
+      - name: Collect exact public release assets and checksums
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($file in @('dist/Sunday/Sunday.exe', 'dist/Sunday/node.exe', 'dist/SundayUninstall.exe', 'dist/SundayInstaller.exe')) {
-            $signature = Get-AuthenticodeSignature -LiteralPath $file
-            if ($signature.Status -ne 'Valid') { throw "$file signature status is $($signature.Status)." }
-          }
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ((Get-Item dist/Sunday/Sunday.exe).VersionInfo.ProductVersion -notlike "$version*") {
+          $launcher = 'dist/Sunday/Sunday.exe'
+          $installer = 'dist/SundayInstaller.exe'
+          $portable = "dist/SundayPortable_${version}_x64.zip"
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw 'The packaged Sunday.exe is missing.' }
+          if ((Get-Item -LiteralPath $launcher).VersionInfo.ProductVersion -notlike "$version*") {
             throw 'Sunday.exe ProductVersion does not match package.json.'
           }
-          if ([string]::IsNullOrWhiteSpace((Get-Item dist/SundayInstaller.exe).VersionInfo.FileVersion)) {
-            throw 'SundayInstaller.exe has no VERSIONINFO resource.'
-          }
-          npm run audit:artifacts
-          if ($LASTEXITCODE -ne 0) { throw 'Independent artifact audit failed.' }
-
-      - name: Collect immutable release assets
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $out = 'release-assets'
-          New-Item -ItemType Directory -Force $out | Out-Null
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          Copy-Item dist/SundayInstaller.exe $out -Force
-          Copy-Item dist/release-inventory.json $out -Force
-          Copy-Item dist/sunday-release.json $out -Force
-          Copy-Item "dist/SundayPortable_${version}_x64.zip" $out -Force
-          npm sbom --sbom-format cyclonedx | Set-Content (Join-Path $out 'npm-sbom.cdx.json') -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw 'npm SBOM generation failed.' }
-          cargo metadata --locked --format-version 1 --manifest-path src-tauri/Cargo.toml | Set-Content (Join-Path $out 'src-tauri-cargo-metadata.json') -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw 'src-tauri dependency inventory failed.' }
-          cargo metadata --locked --format-version 1 --manifest-path installer/Cargo.toml | Set-Content (Join-Path $out 'installer-cargo-metadata.json') -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw 'installer dependency inventory failed.' }
-          Get-ChildItem $out -File | ForEach-Object {
-            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'SundayInstaller.exe is missing.' }
+          if (-not (Test-Path -LiteralPath $portable -PathType Leaf)) { throw 'The portable release archive is missing.' }
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item -LiteralPath $installer -Destination release-assets/SundayInstaller.exe -Force
+          Copy-Item -LiteralPath $portable -Destination "release-assets/SundayPortable_${version}_x64.zip" -Force
+          Get-ChildItem release-assets -File | Sort-Object Name | ForEach-Object {
+            $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
             '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), $_.Name
-          } | Set-Content (Join-Path $out 'checksums.txt') -Encoding ascii
+          } | Set-Content release-assets/SHA256SUMS.txt -Encoding ascii
 
-      - name: Remove signing material
-        if: always()
-        shell: pwsh
-        run: |
-          if ($env:SUNDAY_CODESIGN_PFX -and (Test-Path -LiteralPath $env:SUNDAY_CODESIGN_PFX)) {
-            Remove-Item -LiteralPath $env:SUNDAY_CODESIGN_PFX -Force
-          }
+      - name: Scan source and exact public assets for credential material
+        run: npm run audit:release-secrets -- dist/Sunday release-assets
 
-      - name: Attest immutable release assets
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+      - name: Upload exact unsigned release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          subject-path: 'release-assets/*'
-
-      - name: Upload signed artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sunday-launcher-windows-signed-${{ github.sha }}
+          name: sunday-v1.8.14-unsigned-${{ github.sha }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14

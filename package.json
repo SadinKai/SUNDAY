@@ -1,7 +1,7 @@
 {
     "name":  "sunday-launcher",
     "version": "1.8.14",
-    "description":  "SUNDAY Launcher - a fail-closed Windows account and process management shell for Roblox",
+    "description":  "SUNDAY Launcher - manage multiple Roblox accounts and launch multiple Roblox clients on Windows",
     "author":  "SADINKAI",
     "license":  "MIT",
     "engines": {
@@ -10,7 +10,7 @@
     "scripts":  {
                     "start":  "tauri dev",
                     "tauri":  "tauri",
-                    "test":  "node --test test/safe-unit.test.js test/architecture-behavior.test.js test/phase5-orchestration.test.js test/isolation-protocol.test.js test/isolation-synthetic.test.js test/legacy-compat.test.js test/runtime-adapter-selection.test.js test/identity-migration.test.js test/source-policy.test.js",
+                    "test":  "node --test test/safe-unit.test.js test/architecture-behavior.test.js test/phase5-orchestration.test.js test/isolation-protocol.test.js test/isolation-synthetic.test.js test/legacy-compat.test.js test/runtime-adapter-selection.test.js test/identity-migration.test.js test/source-policy.test.js test/release-security.test.js",
                     "test:isolation-synthetic": "node --test test/isolation-synthetic.test.js",
                     "test:isolation-protocol": "node --test test/isolation-protocol.test.js",
                     "test:isolation-real": "node scripts/qualify-windows-vm.mjs",
@@ -23,6 +23,7 @@
                     "release:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-release.ps1",
                     "release:manifest": "node scripts/create-release-manifest.mjs",
                     "release:verify": "node scripts/verify-release-manifest.mjs",
+                    "audit:release-secrets": "node scripts/audit-release-secrets.mjs",
                     "test:release-manifest": "node scripts/qualify-release-manifest.mjs",
                     "audit:artifacts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/audit-release-artifacts.ps1",
                     "test:single-instance": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-single-instance.ps1",

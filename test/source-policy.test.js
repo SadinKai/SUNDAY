@@ -145,6 +145,13 @@ test('remote fetch is centralized in the bounded policy module', () => {
   }
 });
 
+test('account-creation profile defaults are session-only', () => {
+  const renderer = read('src/renderer/app.js');
+  assert.match(renderer, /let createSessionDefaults = null/);
+  assert.match(renderer, /localStorage\.removeItem\(CREATE_DEFAULTS_KEY\)/);
+  assert.doesNotMatch(renderer, /localStorage\.setItem\(CREATE_DEFAULTS_KEY/);
+});
+
 test('retired destructive updater helpers are absent from the distribution tree', () => {
   for (const file of ['download.js', 'selfupdate.js', 'unzip.js', 'launcher.js', 'guard.js', 'clones.js']) {
     assert.equal(fs.existsSync(path.join(root, 'src/main', file)), false);
@@ -180,22 +187,25 @@ test('installer removal is ledger-bound and never recursively deletes an install
   assert.doesNotMatch(shell, /C:\\\\Users\\\\Public/);
 });
 
-test('release workflow requires signing, locked builds, SBOM, provenance, and signed manifests', () => {
+test('initial public release workflow builds only the exact audited unsigned assets', () => {
   const workflow = read('.github/workflows/build-installer.yml');
   const portable = read('scripts/build-portable.ps1');
   const installer = read('scripts/build-installer.ps1');
-  const manifest = read('scripts/create-release-manifest.mjs');
-  assert.match(workflow, /CODESIGNING_PFX is required/);
-  assert.match(workflow, /SUNDAY_RELEASE_PRIVATE_KEY_PKCS8_B64/);
   assert.match(workflow, /cargo clippy --locked[\s\S]*--all-targets --all-features/);
-  assert.match(workflow, /npm sbom --sbom-format cyclonedx/);
-  assert.match(workflow, /actions\/attest-build-provenance@[a-f0-9]{40}/);
+  assert.match(workflow, /npm run dist/);
+  assert.match(workflow, /npm run release:package/);
   assert.match(workflow, /npm run audit:artifacts/);
+  assert.match(workflow, /npm run audit:release-secrets -- dist\/Sunday release-assets/);
+  assert.match(workflow, /SundayInstaller\.exe/);
+  assert.match(workflow, /SundayPortable_\$\{version\}_x64\.zip/);
+  assert.match(workflow, /SHA256SUMS\.txt/);
+  assert.match(workflow, /Get-FileHash[\s\S]*SHA256/);
+  assert.match(workflow, /actions\/upload-artifact@[a-f0-9]{40}/);
+  assert.match(workflow, /permissions:[\s\S]*contents: read/);
+  assert.doesNotMatch(workflow, /CODESIGNING|SUNDAY_RELEASE_PRIVATE_KEY|attest-build-provenance|test:isolation-real|sunday-legacy-qualification|gh release/);
   assert.doesNotMatch(workflow, /Expand-Archive/);
   assert.match(portable, /tauri build -- --locked/);
   assert.match(installer, /cargo build --release --locked/);
-  assert.match(manifest, /asymmetricKeyType !== 'ed25519'/);
-  assert.match(manifest, /timingSafeEqual\(publicKey, embeddedPublic\)/);
 });
 
 test('manual release packaging rejects runtime residue and reparse points', () => {
