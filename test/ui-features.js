@@ -105,6 +105,24 @@ async function main() {
     if (!booted) throw new Error('SUNDAY Launcher renderer did not finish booting before the test deadline.');
     await evaluate(`(setView('instances'), true)`);
 
+    // Optional public capture happens before any synthetic UI test state is
+    // introduced. The driver always uses a fresh SUNDAY_USER_DATA and WebView2
+    // profile, so this is the real clean packaged Launch screen.
+    if (process.env.SUNDAY_CAPTURE_PATH) {
+      await wait(200);
+      await send('Page.enable');
+      const capture = await send('Page.captureScreenshot', {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: false,
+      });
+      if (!capture.result || !capture.result.data) throw new Error('Chromium did not return screenshot data.');
+      const capturePath = path.resolve(process.env.SUNDAY_CAPTURE_PATH);
+      fs.mkdirSync(path.dirname(capturePath), { recursive: true });
+      fs.writeFileSync(capturePath, Buffer.from(capture.result.data, 'base64'));
+      console.log(`Captured clean packaged UI: ${capturePath}`);
+    }
+
     const facts = await evaluate(`(async () => {
       localStorage.removeItem('sunday-sessions');
       state.status = { robloxFound: true, version: 'test', source: 'test', ffiAvailable: true };
@@ -239,19 +257,37 @@ async function main() {
         summary: !!document.querySelector('.identity-summary'),
       };
 
-      state.updater = { state: 'error', error: 'Update feed unavailable (HTTP 404). The GitHub release source is private or cannot be reached.' };
+      state.updater = { state: 'unavailable' };
+      state.status = {
+        appVersion: '1.8.14',
+        capabilities: { updaterApply: { state: 'UNAVAILABLE' } },
+        adapterSelection: {
+          legacyCompatEnabled: false,
+          legacyCompatEnvironmentEnabled: false,
+          legacyCompatSettingEnabled: false,
+          legacyCompatActivationSource: 'none',
+          selectedAdapter: 'UnavailableRobloxIsolationAdapter',
+          isolationState: 'UNAVAILABLE',
+        },
+      };
+      state.settings.multiInstanceMode = false;
       state.view = 'settings';
       await views.settings();
-      const updateDescription = [...document.querySelectorAll('.s-desc')].find(el => /Update feed unavailable/.test(el.textContent));
+      const updateDescription = [...document.querySelectorAll('.s-desc')].find(el => /Automatic updating/.test(el.textContent));
       const updaterUi = {
         text: updateDescription ? updateDescription.textContent : '',
         overflowWrap: updateDescription ? getComputedStyle(updateDescription).overflowWrap : '',
+        viewReleases: !!document.querySelector('[data-action="update-open-web"]'),
+        deadEndCheck: !!document.querySelector('[data-action="update-check"]'),
       };
       const settingsStructure = {
         index: document.querySelectorAll('.settings-index a').length,
         sections: document.querySelectorAll('.settings-group').length,
         advanced: !!document.querySelector('.settings-advanced'),
         savebar: !!document.querySelector('.settings-savebar'),
+        multiInstanceToggle: !!document.querySelector('#set-multi-instance'),
+        multiInstanceDefault: document.querySelector('#set-multi-instance').checked,
+        multiInstanceStatus: document.querySelector('#multi-instance-status').textContent.trim(),
       };
       state.view = 'instances';
       state.accounts = [
@@ -309,10 +345,22 @@ async function main() {
       const corruptSafe = document.querySelectorAll('#sessions-list .setting').length === 0
         && /No sessions yet/.test(document.querySelector('#sessions-list').textContent);
 
+      const viewSmoke = {};
+      for (const viewName of ['instances', 'games', 'accounts', 'history', 'people', 'stats', 'diagnostics', 'settings', 'help']) {
+        setView(viewName);
+        await new Promise(resolve => setTimeout(resolve, 60));
+        viewSmoke[viewName] = {
+          title: document.title,
+          mounted: !!document.querySelector('#content > .view'),
+          hasHeading: !!document.querySelector('#content h1'),
+        };
+      }
+      setView('instances');
+
       const rapidStart = performance.now();
       for (let i = 0; i < 40; i++) setView(i % 2 ? 'help' : 'instances');
       const rapidNavMs = performance.now() - rapidStart;
-      return { defaultTheme, dark, light, chrome, rapidNavMs, launchStructure, launchTruth, accountStructure, settingsStructure, serverIntel, updaterUi, draft, saved, normalizedSaved, rowText, invalidRejected, corruptSafe };
+      return { defaultTheme, dark, light, chrome, rapidNavMs, launchStructure, launchTruth, accountStructure, settingsStructure, serverIntel, updaterUi, draft, saved, normalizedSaved, rowText, invalidRejected, corruptSafe, viewSmoke };
     })()`);
 
     await evaluate(`(() => {
@@ -379,8 +427,10 @@ async function main() {
       || !facts.launchStructure.roster || !facts.launchStructure.destination || !facts.launchStructure.primaryAction
       || !facts.launchStructure.activeClients || facts.launchStructure.heading !== 'Launch' || facts.launchStructure.legacyKickerCount !== 0
       || !facts.accountStructure.list || facts.accountStructure.rows !== 2 || !facts.accountStructure.summary
-      || facts.settingsStructure.index !== 5 || facts.settingsStructure.sections !== 4
-      || !facts.settingsStructure.advanced || !facts.settingsStructure.savebar) {
+      || facts.settingsStructure.index !== 6 || facts.settingsStructure.sections !== 5
+      || !facts.settingsStructure.advanced || !facts.settingsStructure.savebar
+      || !facts.settingsStructure.multiInstanceToggle || facts.settingsStructure.multiInstanceDefault
+      || !/Disabled for this SUNDAY session/.test(facts.settingsStructure.multiInstanceStatus)) {
       throw new Error('Deep-redesign structure regression: ' + JSON.stringify(facts));
     }
     if (!/Prepare plan/.test(facts.launchTruth.planningLabel)
@@ -419,8 +469,15 @@ async function main() {
       || !/2\s+VISIBLE/i.test(facts.serverIntel.analytics)) {
       throw new Error('Server Intelligence UI failed: ' + JSON.stringify(facts.serverIntel));
     }
-    if (!/HTTP 404/.test(facts.updaterUi.text) || facts.updaterUi.overflowWrap !== 'anywhere') {
-      throw new Error('Updater error UI is not concise and wrap-safe: ' + JSON.stringify(facts.updaterUi));
+    const failedViews = Object.entries(facts.viewSmoke)
+      .filter(([, result]) => !result.mounted || !result.hasHeading || !/SUNDAY Launcher$/.test(result.title));
+    if (Object.keys(facts.viewSmoke).length !== 9 || failedViews.length) {
+      throw new Error('One or more renderer views failed to mount: ' + JSON.stringify(facts.viewSmoke));
+    }
+    if (!/not available in this build/.test(facts.updaterUi.text)
+      || facts.updaterUi.overflowWrap !== 'anywhere'
+      || !facts.updaterUi.viewReleases || facts.updaterUi.deadEndCheck) {
+      throw new Error('Updater unavailable UI is not truthful and actionable: ' + JSON.stringify(facts.updaterUi));
     }
     if (exceptions.length) throw new Error('Renderer exceptions: ' + exceptions.join('; '));
 

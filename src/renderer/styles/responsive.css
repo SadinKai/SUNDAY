@@ -1,0 +1,48 @@
+/* ----------------------------- Responsive ----------------------------- */
+@media (max-width: 1080px) {
+  .ilist .head, .irow { grid-template-columns: 16px 70px 1fr 96px 112px; }
+  .irow .when, .ilist .head .when { display: none; }
+}
+@media (max-width: 940px) {
+  :root { --rail-w: 60px; --space-page-x: 24px; --view-max-w: 100%; }
+  .rail { padding: 10px 8px; }
+  .nav .label, .nav .count, .nav-group, .rail-foot, .rail-brand > span { display: none; }
+  .rail-brand { justify-content: center; padding-inline: 0; }
+  .nav button { justify-content: center; padding: 0; height: 36px; }
+  .nav button.active::before { left: -8px; }
+  .nav .nav-sep { margin: 8px 4px; }
+  .profile-layout { grid-template-columns: 1fr; }
+  .profile-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  :root { --space-page-x: 18px; --space-page-y: 20px; --space-page-bottom: 32px; --space-card-x: 16px; }
+  .content { padding-left: var(--space-page-x); padding-right: var(--space-page-x); }
+  .toolbar, .row-split, .inline, .acct .acct-actions, .game-actions { flex-wrap: wrap; }
+  .p-foot, .watch-row { flex-wrap: wrap; }
+  .w-game { flex: 1 1 120px; }
+  .p-item .p-hint { display: none; }
+  .acct-grid, .games-grid, .people-grid, .stat-grid { grid-template-columns: 1fr; }
+  .profile-hero, .now-playing { align-items: flex-start; flex-direction: column; }
+  .profile-side { grid-template-columns: 1fr; }
+  .modal { width: min(540px, calc(100vw - 28px)); max-height: calc(100vh - 28px); }
+  .toasts { left: 14px; right: 14px; bottom: 14px; }
+  .toast { min-width: 0; max-width: none; }
+  .titlebar-local, .titlebar-divider, .titlebar-section { display: none; }
+}
+@media (prefers-contrast: more) {
+  :root { --hair: #b2a196; --hair-2: #8f796b; }
+  :root[data-theme="dark"] { --hair: #554439; --hair-2: #79604e; }
+  .btn, .card, .acct, .game, .person { border-width: 2px; }
+}
+@media (forced-colors: active) {
+  .nav button.active::before, .page-head::after { background: Highlight; }
+  .brand-mark, .titlebar-logo { forced-color-adjust: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .001ms !important;
+  }
+}

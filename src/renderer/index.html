@@ -6,7 +6,12 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' asset: ipc:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https://*.rbxcdn.com; font-src 'self' data:; connect-src 'self' ipc:; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none';" />
   <title>SUNDAY Launcher</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles/tokens.css" />
+  <link rel="stylesheet" href="styles/shell.css" />
+  <link rel="stylesheet" href="styles/views.css" />
+  <link rel="stylesheet" href="styles/responsive.css" />
+  <link rel="stylesheet" href="styles/layout.css" />
+  <link rel="stylesheet" href="styles/launch.css" />
 </head>
 <body>
   <!-- Phosphor Icons v2.1.1 Fill subset (MIT); SUNDAY logo remains custom. -->
@@ -132,6 +137,21 @@
   <script src="legacy-identity-compat.js"></script>
   <script src="model.js"></script>
   <script src="tauri-bridge.js"></script>
+  <script src="core.js"></script>
+  <script src="components/notifications.js"></script>
+  <script src="components/palette.js"></script>
+  <script src="components/overlays.js"></script>
+  <script src="router.js"></script>
+  <script src="views/launch.js"></script>
+  <script src="views/accounts.js"></script>
+  <script src="views/games.js"></script>
+  <script src="views/people.js"></script>
+  <script src="views/history-stats.js"></script>
+  <script src="views/diagnostics.js"></script>
+  <script src="views/settings.js"></script>
+  <script src="views/help.js"></script>
+  <script src="actions.js"></script>
+  <script src="runtime.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

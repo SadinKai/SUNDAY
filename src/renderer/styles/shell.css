@@ -1,0 +1,197 @@
+/* ----------------------------- Base ----------------------------- */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+html { background: transparent; overflow: hidden; }
+body {
+  font-family: var(--font); color: var(--ink); background: transparent;
+  font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility; overflow: hidden;
+  font-feature-settings: "ss01", "cv01";
+}
+.skip-link { position: fixed; left: 14px; top: 10px; z-index: 1000; padding: 8px 12px; border-radius: var(--r);
+  color: var(--on-accent); background: var(--accent); font-weight: 700; text-decoration: none; transform: translateY(-180%); }
+.skip-link:focus { transform: none; }
+.window-shell {
+  width: 100%; height: 100%; position: relative; overflow: hidden;
+  background: var(--bg); border: 1px solid color-mix(in srgb, var(--hair-2) 72%, transparent); border-radius: 10px;
+  clip-path: inset(0 round 10px);
+}
+body.window-maximized .window-shell { border-radius: 0; border-color: transparent; clip-path: none; }
+
+/* Keyboard focus: one ring style for every interactive element. */
+.nav button:focus-visible, .window-controls button:focus-visible, .chip:focus-visible,
+.cat-chip:focus-visible, .seg-chip:focus-visible, .people-entry:focus-visible, .join-account-choice:focus-visible,
+.ctxmenu button:focus-visible, .toast-x:focus-visible, .server-copy:focus-visible, .server-reset:focus-visible,
+.back-link:focus-visible, .faq summary:focus-visible, .stepper button:focus-visible, .stepper input:focus-visible {
+  outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: var(--r-sm); }
+:where(button, input, select, textarea, a[href], summary):focus-visible {
+  outline: 2px solid var(--accent-2); outline-offset: 2px;
+}
+svg.ico, svg.b-ico, svg.t-ico {
+  fill: currentColor; stroke: none;
+}
+/* Default glyph box: an .ico with no container-specific size rule must never
+   fall back to the SVG default (300x150) — that is what made the username
+   status icons and the Watching-card eye render enormous. */
+svg.ico { width: 16px; height: 16px; flex: none; }
+::selection { background: rgba(230, 90, 28, .28); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 8px; border: 3px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ----------------------------- Window shell ----------------------------- */
+/* Integrated frameless titlebar; drag region spans the bar behind the
+   caption buttons (like native Win32 hit-testing). */
+.titlebar { height: 44px; display: grid; grid-template-columns: 1fr auto; align-items: start;
+  background: var(--rail); border-bottom: 1px solid var(--hair); user-select: none; }
+.titlebar-drag { grid-column: 1 / -1; grid-row: 1; height: 100%; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0 156px 0 14px; cursor: default; }
+.titlebar-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.titlebar-logo { width: 19px; height: 19px; flex: none; }
+.titlebar-product { font-family: var(--font-brand); font-size: 11px; font-weight: 700; letter-spacing: .15em; color: var(--ink); }
+.titlebar-divider { width: 24px; height: 1px; background: var(--accent); }
+.titlebar-section { color: var(--ink-3); font-size: 11px; font-weight: 600; }
+.titlebar-local { margin-left: auto; color: var(--ink-4); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; white-space: nowrap; }
+/* Native Windows caption buttons: 46x32 at 100% scale, top-aligned. */
+.window-controls { grid-column: 2; grid-row: 1; display: flex; position: relative; z-index: 1; }
+.window-controls button { width: 46px; height: 32px; padding: 0; border: 0; border-radius: 0; display: grid; place-items: center;
+  color: var(--ink); background: transparent; cursor: default; transition: background var(--motion-fast), color var(--motion-fast); }
+.window-controls button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.window-controls button:active { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.window-controls .window-close:hover, .window-controls .window-close:active { color: #fff; background: #c42b1c; }
+.window-controls svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
+.window-controls .restore-glyph { display: none; }
+body.window-maximized .window-controls .maximize-glyph { display: none; }
+body.window-maximized .window-controls .restore-glyph { display: block; }
+
+.app { display: grid; grid-template-columns: var(--rail-w) 1fr; height: calc(100% - 44px); }
+
+/* ----------------------------- Navigation rail ----------------------------- */
+.rail {
+  background: var(--rail); border-right: 1px solid var(--hair);
+  display: flex; flex-direction: column; padding: 14px 12px 10px; min-width: 0;
+}
+.rail .spacer { flex: 1; }
+
+.rail-brand { display: flex; align-items: center; gap: 11px; min-height: 52px; padding: 2px 8px 13px; margin-bottom: 10px;
+  border-bottom: 1px solid var(--hair); user-select: none; }
+.rail-brand .brand-mark { width: 32px; height: 32px; flex: none; filter: drop-shadow(0 4px 8px rgba(93, 39, 13, .16)); }
+.rail-brand > span { display: flex; flex-direction: column; min-width: 0; line-height: 1.05; }
+.rail-brand b { font-family: var(--font-brand); font-size: 14px; letter-spacing: .16em; }
+.rail-brand small { color: var(--ink-3); font-size: 9px; font-weight: 600; letter-spacing: .13em; margin-top: 4px; text-transform: uppercase; }
+
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-group { padding: 8px 10px 5px; color: var(--ink-4); font-family: var(--mono); font-size: 9px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase; }
+.nav .nav-sep { height: 1px; background: var(--hair); margin: 8px 10px; flex: none; }
+.nav button {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left; height: 36px; padding: 0 10px; border: 1px solid transparent; border-radius: var(--r);
+  background: transparent; color: var(--ink-2); font: inherit; font-weight: 500; font-size: 13px;
+  cursor: pointer; transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.nav button:hover { background: color-mix(in srgb, var(--surface) 68%, transparent); color: var(--ink); }
+/* Active = quiet surface + ink text + 3px accent indicator at the rail edge.
+   The accent marks location; it does not shout. */
+.nav button.active { background: var(--surface); border-color: var(--hair); color: var(--ink); box-shadow: var(--sh-card); }
+.nav button.active::before { content: ""; position: absolute; left: -13px; top: 9px; bottom: 9px;
+  width: 4px; border-radius: 0 4px 4px 0; background: var(--accent); }
+.nav button .ico { width: 17px; height: 17px; flex: none; opacity: .85; }
+.nav button.active .ico { opacity: 1; }
+.nav .label { flex: 1; }
+.nav .count { font-size: 11px; font-weight: 500; line-height: 1; color: var(--ink-4);
+  font-variant-numeric: tabular-nums; text-align: right; }
+.nav button.active .count { color: var(--accent-2); }
+
+/* Rail footer — quiet version line. */
+.rail-foot { padding: 12px 10px 3px; display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--hair); margin-top: 8px;
+  color: var(--ink-4); font-size: 11px; font-weight: 500; letter-spacing: .02em; user-select: none; }
+.rail-foot .dot-live { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); flex: none; }
+
+@keyframes pulse { 0% { transform: scale(.6); opacity: .5; } 100% { transform: scale(1.6); opacity: 0; } }
+
+/* ----------------------------- Content ----------------------------- */
+.content { overflow: auto; padding: var(--space-page-y) var(--space-page-x) var(--space-page-bottom); min-width: 0; scroll-padding-top: 16px; }
+.view { max-width: var(--view-max-w); margin: 0 auto; }
+.view-enter { animation: viewIn .22s var(--ease); }
+@keyframes viewIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.page-head { position: relative; margin-bottom: 26px; padding-bottom: 18px; border-bottom: 1px solid var(--hair); }
+.page-head::after { content: ""; position: absolute; left: 0; bottom: -1px; width: 82px; height: 2px; background: var(--accent); }
+.page-kicker { margin-bottom: 5px; color: var(--accent-text); font-family: var(--mono); font-size: 9px; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; }
+.page-head h1 { font-family: var(--font-display); font-size: 27px; line-height: 1.12; font-weight: 650; letter-spacing: -.025em; margin: 0; }
+.page-head p { margin: 7px 0 0; color: var(--ink-2); max-width: 68ch; font-size: 13px; line-height: 1.55; }
+.page-head.compact { margin-bottom: 18px; }
+
+.section-title { font-family: var(--font-brand); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--ink-3); margin: 28px 2px 12px; }
+
+.card { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--r-lg); box-shadow: var(--sh-card); }
+.card.pad { padding: var(--space-card) var(--space-card-x); }
+.row-split { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+/* In-card header: title (13/600) + optional description + actions. */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 12px; }
+.card-head .t { font-family: var(--font-display); font-size: 14px; font-weight: 650; color: var(--ink); }
+.card-head .d { font-size: 12px; color: var(--ink-3); margin: 0 0 0 10px; }
+
+/* Banner / callout: tinted flat panel, icon + one-line title + short desc. */
+.banner { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border: 1px solid var(--hair);
+  border-radius: var(--r-lg); background: var(--surface); animation: viewIn .28s var(--ease); }
+.banner .b-ico { width: 17px; height: 17px; flex: none; }
+.banner .b-text b { font-weight: 600; font-size: 13px; }
+.banner .b-text span { color: var(--ink-2); display: block; font-size: 12px; margin-top: 1px; }
+.banner .b-actions { margin-left: auto; display: flex; gap: 8px; }
+.banner.good { background: var(--success-bg); border-color: var(--success-ring); }
+.banner.good .b-ico { color: var(--success); }
+.banner.bad { background: var(--danger-bg); border-color: var(--danger-ring); }
+.banner.bad .b-ico { color: var(--danger); }
+.banner.warn { background: var(--warning-bg); border-color: var(--warning-ring); }
+.banner.warn .b-ico { color: var(--warning); }
+
+/* ----------------------------- Buttons ----------------------------- */
+/* One family. Default = quiet surface + hairline. Primary = flat accent, no glow.
+   Ghost = borderless, for low-emphasis row actions. */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: var(--control-h); padding: 0 12px;
+  border-radius: var(--r); border: 1px solid var(--hair-2); background: var(--surface); color: var(--ink);
+  font: inherit; font-weight: 500; font-size: 13px; cursor: pointer; white-space: nowrap; user-select: none;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease); }
+.btn:hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--ink-3) 40%, var(--hair-2)); }
+.btn:active { background: var(--surface-3); }
+.btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.btn .ico { width: 15px; height: 15px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 650; }
+.btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+.btn.primary:active { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.btn.danger { color: var(--danger); border-color: var(--danger-ring); background: transparent; }
+.btn.danger:hover { background: var(--danger-bg); border-color: var(--danger); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--surface-2); color: var(--ink); border-color: transparent; }
+.btn.ghost:active { background: var(--surface-3); }
+.btn.sm { min-height: var(--control-h-sm); padding: 0 10px; font-size: 12px; }
+.btn.sm .ico { width: 14px; height: 14px; }
+.btn.icon { width: var(--icon-btn); min-height: var(--icon-btn); padding: 0; }
+.btn.sm.icon { width: var(--control-h-sm); min-height: var(--control-h-sm); }
+.btn.lg { min-height: var(--control-h-lg); padding: 0 16px; }
+.btn[disabled] { opacity: .4; cursor: not-allowed; }
+.btn[disabled]:hover { background: var(--surface); border-color: var(--hair-2); }
+.btn.primary[disabled]:hover { background: var(--accent); border-color: var(--accent); }
+/* Quiet "on" state for toggle buttons (Live, Hide empty, watch, fav). */
+.btn.on, .btn.active-filter { background: var(--accent-soft); border-color: var(--accent-ring); color: var(--accent-text); }
+.btn.fav.on { color: var(--warning); border-color: var(--warning-ring); background: var(--warning-bg); }
+.btn.fav.on svg { fill: currentColor; }
+.btn.watch.on { background: var(--accent-soft); border-color: var(--accent-ring); color: var(--accent-text); }
+.btn.watch.on svg { fill: currentColor; }
+
+/* Stepper */
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--hair-2); border-radius: var(--r);
+  overflow: hidden; background: var(--surface); height: var(--control-h-lg); }
+.stepper button { border: 0; background: transparent; width: 36px; height: 100%; font-size: 16px; cursor: pointer;
+  color: var(--ink-2); transition: background var(--motion-fast); }
+.stepper button:hover { background: var(--surface-2); color: var(--ink); }
+.stepper input { width: 46px; height: 100%; border: 0; border-left: 1px solid var(--hair); border-right: 1px solid var(--hair);
+  text-align: center; font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; background: transparent; color: var(--ink); }
+.stepper input:focus { outline: none; }

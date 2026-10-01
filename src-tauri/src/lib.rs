@@ -461,6 +461,23 @@ async fn updater_restart(_app: AppHandle) -> Value {
         "reason": "Automatic update restart is unavailable until signed side-by-side update and rollback are qualified."
     })
 }
+
+#[tauri::command]
+async fn app_restart(app: AppHandle) -> Value {
+    if let Some(state) = app.try_state::<SundayState>() {
+        if let Ok(mut guard) = state.backend.lock() {
+            if let Some(backend) = guard.take() {
+                backend.shutdown();
+            }
+        }
+    }
+    let restart_handle = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(150));
+        restart_handle.request_restart();
+    });
+    json!({ "ok": true, "restartRequested": true })
+}
 backend_command!(launch_quick, "launch_quick", (count: Option<i64>), json!({ "count": count }));
 backend_command!(launch_accounts, "launch_accounts", (account_ids: Vec<String>, place_id: Option<String>), json!({ "accountIds": account_ids, "placeId": place_id }));
 backend_command!(launch_join, "launch_join", (account_ids: Vec<String>, place_id: Option<String>, game_id: Option<String>), json!({ "accountIds": account_ids, "placeId": place_id, "gameId": game_id }));
@@ -889,6 +906,7 @@ pub fn run() {
             updater_check,
             updater_install,
             updater_restart,
+            app_restart,
             jobs_list,
             job_get,
             job_cancel,
