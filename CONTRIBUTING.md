@@ -16,8 +16,8 @@ By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
-Follow [docs/development.md](docs/development.md). The minimum local verification
-is:
+Follow [docs/developer/development.md](docs/developer/development.md). The
+minimum local verification is:
 
 ```powershell
 npm ci
@@ -46,8 +46,9 @@ formatting churn into a functional change.
 
 ## Tests required
 
-Run the relevant commands from [docs/testing.md](docs/testing.md). A normal pull
-request should include:
+Run the relevant commands from
+[docs/developer/testing.md](docs/developer/testing.md). A normal pull request
+should include:
 
 ```powershell
 npm test
@@ -61,7 +62,7 @@ git diff --check
 ```
 
 Add a regression test for a bug fix. State which evidence tier was reached;
-source checks do not imply signed-release or live-Roblox qualification.
+source checks do not imply packaged-artifact or live-Roblox qualification.
 
 ## Pull requests
 

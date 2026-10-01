@@ -36,7 +36,7 @@ flowchart TB
     RPC --> Network
     Coordinator --> Selector
     Selector -->|default| Unavailable
-    Selector -->|LEGACY_COMPAT=1| Legacy
+    Selector -->|saved opt-in or LEGACY_COMPAT=1| Legacy
     Legacy --> Slots
 ```
 
@@ -90,13 +90,17 @@ and an externally observed client is never adopted automatically.
 
 ## Isolation adapters
 
-`roblox-isolation-adapter.js` selects the adapter before `LaunchCoordinator` is
-constructed:
+After persistent settings are loaded, `roblox-isolation-adapter.js` selects the
+adapter before `LaunchCoordinator` is constructed:
 
 - Default: `UnavailableRobloxIsolationAdapter` preserves plans but refuses
   execution.
-- Exact `LEGACY_COMPAT=1`: `LegacyRobloxIsolationAdapter` enables the bounded
-  compatibility path.
+- Saved `multiInstanceMode: true` or exact `LEGACY_COMPAT=1`:
+  `LegacyRobloxIsolationAdapter` enables the same bounded compatibility path.
+
+The selected adapter is immutable for the process lifetime, so changing the
+saved preference requires a controlled application restart. Diagnostics records
+whether the saved setting or environment override selected it.
 
 The legacy adapter retains the established singleton handling, clone builder,
 tree validation, three-slot allocator, `RELEASED_BUT_BUSY` behavior, ownership
@@ -112,11 +116,12 @@ general-purpose remote navigation channel.
 
 ## Update and release trust
 
-Release metadata uses signed canonical manifests with monotonic sequence,
-publisher, key identifier, and artifact digests. The update coordinator cannot
-apply downloaded code merely because a public key exists. In-application update
-application remains unavailable until side-by-side activation, rollback, and
-the complete trust path are qualified.
+The release-trust code can validate signed canonical manifests with monotonic
+sequence, publisher, key identifier, and artifact digests. The public v1.8.14
+assets are intentionally unsigned and are distributed with SHA-256 checksums.
+The update coordinator cannot apply downloaded code merely because a public key
+exists. In-application update application remains unavailable until
+side-by-side activation, rollback, and the complete trust path are qualified.
 
 ## Installer
 

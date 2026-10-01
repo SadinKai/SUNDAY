@@ -29,7 +29,10 @@ npm run start
 ```
 
 The Tauri shell stages its Node runtime into an ignored resource path during the
-build. The default adapter remains unavailable for Roblox execution.
+build. The default adapter remains unavailable for Roblox execution. Current
+source builds expose the opt-in multi-instance preference in Settings; changing
+it requires a controlled application restart. The exact `LEGACY_COMPAT=1`
+environment value remains a backward-compatible override.
 
 Environment variables are process inputs, not a substitute for a populated
 `.env` loader. Copy `.env.example` only for tooling that explicitly supports it;
@@ -68,8 +71,9 @@ Generated output appears under `dist/`, the Cargo `target/` directories, and the
 staged Tauri resource directory. All are ignored. Use `cargo clean` with each
 manifest when reclaiming generated Rust output.
 
-Production signing inputs are described in [Release engineering](release.md).
-Never use development placeholders as release credentials.
+Release inputs and the current unsigned distribution model are described in
+[Release engineering](release.md). Never use development placeholders as
+release credentials.
 
 ## Runtime state
 
@@ -80,9 +84,14 @@ SQLite files, account exports, logs, clone trees, or screenshots.
 
 ## Safe local testing
 
-The default automated suite does not launch Roblox. Native UI tests require the
-explicit `SUNDAY_ISOLATED_VM=1` guard and a disposable Windows VM. Live legacy
-drivers additionally require `LEGACY_COMPAT=1`, disposable accounts, and an
-environment where losing local state is acceptable.
+The default automated suite does not launch Roblox. Native UI drivers require
+the explicit `SUNDAY_ISOLATED_VM=1` guard and an isolated, dedicated user-data
+directory. Run them only on a controlled Windows environment where application
+state can be discarded.
+
+Live legacy drivers are a separate, explicit qualification tier. They require
+the legacy adapter, authorized test accounts, and a controlled environment with
+no valuable Roblox session or process state. They can launch Roblox and are
+never part of a normal build or CI run.
 
 See [Testing](testing.md) for the complete boundary.

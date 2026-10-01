@@ -7,6 +7,19 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
+function filesUnder(relative, extension) {
+  const output = [];
+  function visit(current) {
+    for (const entry of fs.readdirSync(path.join(root, current), { withFileTypes: true })) {
+      const child = path.join(current, entry.name);
+      if (entry.isDirectory()) visit(child);
+      else if (!extension || entry.name.endsWith(extension)) output.push(child);
+    }
+  }
+  visit(relative);
+  return output.sort();
+}
+const rendererJavaScript = () => filesUnder(path.join('src', 'renderer'), '.js').map(read).join('\n');
 const { isSundayTarget } = require('./smoke');
 
 test('production backend exposes capability gates and no updater applier imports', () => {
@@ -19,6 +32,8 @@ test('production backend exposes capability gates and no updater applier imports
   assert.match(source, /startUpdateCheck\(jobs, payload\.idempotencyKey\)/);
   assert.match(bridge, /updater_check', \{ idempotencyKey \}/);
   assert.match(rust, /updater_check[\s\S]*idempotencyKey/);
+  assert.match(rust, /async fn app_restart[\s\S]*request_restart/);
+  assert.match(bridge, /restart: \(\) => tauriInvoke\('app_restart'\)/);
   assert.doesNotMatch(source, /require\('\.\/(?:download|selfupdate|unzip)'\)/);
   assert.doesNotMatch(source, /latest\.yml|downloadUpdatePackage|applyUpdate\s*\(/);
   assert.doesNotMatch(source, /launching directly/);
@@ -53,7 +68,7 @@ test('legacy compatibility is quarantined, explicit, and has no broad process co
   const legacyNative = read('src/main/legacy-roblox-native.js');
   const backend = read('src/main/tauri-backend.js');
   const rust = read('src-tauri/src/lib.rs');
-  const renderer = read('src/renderer/app.js');
+  const renderer = rendererJavaScript();
   assert.match(selector, /LEGACY_COMPAT === '1'/);
   assert.match(legacy, /class LegacyRobloxIsolationAdapter/);
   assert.match(legacy, /LEGACY CROSS-PROCESS COMPATIBILITY ACTION/);
@@ -66,6 +81,9 @@ test('legacy compatibility is quarantined, explicit, and has no broad process co
   assert.match(backend, /adapterSelection: Object\.assign\(\{\}, adapterSelection\)/);
   assert.match(backend, /implementation: adapterSelection\.selectedAdapter/);
   assert.match(backend, /async adapter_selection_status\(\)/);
+  assert.match(backend, /resolveLegacyCompatibility\(settings, externalAdapterEnvironment\)/);
+  assert.match(backend, /legacyCompatSettingEnabled/);
+  assert.match(backend, /restartRequired: settings\.multiInstanceMode !== before\.multiInstanceMode/);
   assert.match(rust, /var_os\("LEGACY_COMPAT"\)[\s\S]*command\.env\("LEGACY_COMPAT", value\)/);
   assert.doesNotMatch(rust, /env_clear\s*\(/);
   assert.match(renderer, /selection\.selectedAdapter === 'LegacyRobloxIsolationAdapter'/);
@@ -146,7 +164,7 @@ test('remote fetch is centralized in the bounded policy module', () => {
 });
 
 test('account-creation profile defaults are session-only', () => {
-  const renderer = read('src/renderer/app.js');
+  const renderer = rendererJavaScript();
   assert.match(renderer, /let createSessionDefaults = null/);
   assert.match(renderer, /localStorage\.removeItem\(CREATE_DEFAULTS_KEY\)/);
   assert.doesNotMatch(renderer, /localStorage\.setItem\(CREATE_DEFAULTS_KEY/);
@@ -224,7 +242,7 @@ test('manual release packaging rejects runtime residue and reparse points', () =
 test('SUNDAY Launcher is canonical and former identity values are isolated', () => {
   const html = read('src/renderer/index.html');
   const splash = read('src/renderer/splash.html');
-  const renderer = read('src/renderer/app.js');
+  const renderer = rendererJavaScript();
   const tauri = JSON.parse(read('src-tauri/tauri.conf.json'));
   const packageMetadata = JSON.parse(read('package.json'));
   const installer = read('installer/src/main.rs');
@@ -309,6 +327,38 @@ test('supported native UI entry points require an isolated VM declaration', () =
   }
 });
 
+test('renderer is split into ordered responsibility modules without a framework migration', () => {
+  const html = read('src/renderer/index.html');
+  const bootstrap = read('src/renderer/app.js');
+  const expectedScripts = [
+    'core.js',
+    'components/notifications.js',
+    'components/palette.js',
+    'components/overlays.js',
+    'router.js',
+    'views/launch.js',
+    'views/accounts.js',
+    'views/games.js',
+    'views/people.js',
+    'views/history-stats.js',
+    'views/diagnostics.js',
+    'views/settings.js',
+    'views/help.js',
+    'actions.js',
+    'runtime.js',
+    'app.js',
+  ];
+  let previous = -1;
+  for (const script of expectedScripts) {
+    const index = html.indexOf(`<script src="${script}"></script>`);
+    assert.ok(index > previous, `${script} is missing or out of order`);
+    previous = index;
+  }
+  assert.ok(bootstrap.length < 5000, 'app.js must remain a small bootstrap coordinator');
+  assert.equal(fs.existsSync(path.join(root, 'src', 'renderer', 'styles.css')), false);
+  assert.doesNotMatch(html, /react|vue|svelte/i);
+});
+
 test('packaged smoke target detection accepts the canonical Tauri URL and route title', () => {
   assert.equal(isSundayTarget({
     type: 'page',
@@ -330,15 +380,54 @@ test('packaged smoke target detection accepts the canonical Tauri URL and route 
 test('public-facing GitHub links use the canonical SUNDAY repository', () => {
   const activeFiles = [
     path.join(root, 'README.md'),
-    path.join(root, 'docs', 'getting-started.md'),
+    path.join(root, 'docs', 'user', 'getting-started.md'),
     path.join(root, 'installer', 'src', 'main.rs'),
     path.join(root, 'scripts', 'create-release-manifest.mjs'),
-    path.join(root, 'src', 'renderer', 'app.js'),
+    ...filesUnder(path.join('src', 'renderer'), '.js').map(file => path.join(root, file)),
   ];
   for (const file of activeFiles) {
     const source = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(source, /github\.com\/SadinKai\/RobloxV2/i, path.relative(root, file));
   }
+});
+
+test('public documentation has no placeholder visual or broken local links', () => {
+  const files = [
+    'README.md',
+    'PRIVACY.md',
+    'SECURITY.md',
+    'SUPPORT.md',
+    'CONTRIBUTING.md',
+    'CHANGELOG.md',
+    ...filesUnder('docs', '.md'),
+  ];
+  assert.doesNotMatch(read('README.md'), /screenshot pending/i);
+  const broken = [];
+  for (const file of files) {
+    const source = read(file);
+    const base = path.dirname(path.join(root, file));
+    for (const match of source.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g)) {
+      const rawTarget = match[1].trim().replace(/^<|>$/g, '');
+      if (!rawTarget || /^(?:https?:|mailto:|#)/i.test(rawTarget)) continue;
+      const target = decodeURIComponent(rawTarget.split('#', 1)[0]);
+      if (!fs.existsSync(path.resolve(base, target))) broken.push(`${file} -> ${rawTarget}`);
+    }
+  }
+  assert.deepEqual(broken, []);
+});
+
+test('multi-instance preference and privacy documentation keep secrets outside renderer state', () => {
+  const store = read('src/main/store.js');
+  const backend = read('src/main/tauri-backend.js');
+  const settingsView = read('src/renderer/views/settings.js');
+  const privacy = read('PRIVACY.md');
+  assert.match(store, /multiInstanceMode: false/);
+  assert.match(store, /s\.multiInstanceMode = s\.multiInstanceMode === true/);
+  assert.match(backend, /const legacyCompatibility = resolveLegacyCompatibility\(settings, externalAdapterEnvironment\)/);
+  assert.doesNotMatch(settingsView, /\.ROBLOSECURITY|auth(?:entication)?Ticket|cookieValue/i);
+  assert.match(privacy, /Windows DPAPI/);
+  assert.match(privacy, /raw cookie is not returned to ordinary renderer UI state/);
+  assert.match(privacy, /no telemetry, remote analytics, or\s+remote crash reporting/);
 });
 
 test('public provenance distinguishes Fleet origin from SUNDAY maintenance', () => {

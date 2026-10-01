@@ -1,21 +1,36 @@
 # Configuration
 
-SUNDAY reads configuration from its inherited process environment. The
-repository's `.env.example` documents names and safe empty defaults; SUNDAY does
-not automatically load that file.
+Normal user preferences are persisted through SUNDAY's existing settings
+store. Process environment variables remain available for controlled testing,
+release tooling, and backward compatibility. The repository's `.env.example`
+documents names and safe empty defaults; SUNDAY does not automatically load
+that file.
+
+## Application settings
+
+The `multiInstanceMode` boolean defaults to `false`. On startup, the backend
+loads it before adapter selection. A saved `true` value selects the same
+`LegacyRobloxIsolationAdapter` used by the historical environment opt-in. A
+change requires an application restart because the selected adapter is
+intentionally immutable for the process lifetime.
+
+The renderer receives only the setting, selected-adapter status, activation
+source, and restart requirement. No Roblox cookie or other credential is stored
+in this preference.
 
 ## Runtime selection
 
 | Variable | Meaning | Safe default |
 | --- | --- | --- |
-| `LEGACY_COMPAT` | Selects `LegacyRobloxIsolationAdapter` only when exactly `1`. | `0` / absent |
+| `LEGACY_COMPAT` | Backward-compatible override that selects `LegacyRobloxIsolationAdapter` only when exactly `1`. | `0` / absent |
 | `SUNDAY_USER_DATA` | Overrides the runtime-state directory for controlled tests. | OS application-data location |
 | `SUNDAY_ISOLATED_VM` | Guard required by native UI test drivers when exactly `1`. | absent |
 | `SUNDAY_TEST_EXE` | Exact packaged executable for UI qualification. | absent |
 
-`LEGACY_COMPAT=true` does not enable the legacy adapter. The application reads
-the variable before adapter selection and exposes the selected adapter and
-isolation reason through backend status.
+`LEGACY_COMPAT=true` does not enable the legacy adapter. An exact environment
+value of `1` takes effect even when the saved preference is off. The backend
+exposes the saved preference, environment match, activation source, selected
+adapter, and isolation reason through diagnostics.
 
 ## Signing and release inputs
 
@@ -33,9 +48,9 @@ isolation reason through backend status.
 | `SUNDAY_RELEASE_BASE_URL` | Canonical HTTPS artifact base location. |
 
 Never put real signing values into `.env.example`, GitHub issues, build logs, or
-source control. GitHub Actions supplies secret values through repository or
-environment secrets and removes temporary certificate material in an `always()`
-cleanup step.
+source control. These inputs describe optional future controlled signing
+workflows; the public v1.8.14 binaries are unsigned. A build that explicitly
+requires signing still fails closed when its inputs are missing or invalid.
 
 ## Repository hygiene
 

@@ -7,6 +7,7 @@ Choose the channel that matches the request:
   problem before proposing implementation details.
 - **Usage or build question:** check the README and `docs/` first, then open a
   bug report only when documented behavior is reproducibly incorrect.
+- **Privacy question:** read [PRIVACY.md](PRIVACY.md) before sharing diagnostics.
 - **Security issue:** follow [SECURITY.md](SECURITY.md) and report privately.
 - **Contribution:** read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull
   request.
