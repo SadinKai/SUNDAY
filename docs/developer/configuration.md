@@ -24,8 +24,9 @@ in this preference.
 | --- | --- | --- |
 | `LEGACY_COMPAT` | Backward-compatible override that selects `LegacyRobloxIsolationAdapter` only when exactly `1`. | `0` / absent |
 | `SUNDAY_USER_DATA` | Overrides the runtime-state directory for controlled tests. | OS application-data location |
-| `SUNDAY_ISOLATED_VM` | Guard required by native UI test drivers when exactly `1`. | absent |
-| `SUNDAY_TEST_EXE` | Exact packaged executable for UI qualification. | absent |
+| `SUNDAY_TEST_EXE` | Exact packaged executable for guarded real-Windows launch qualification. | absent |
+| `SUNDAY_LIVE_SINGLECLIENT_QUALIFICATION` | Explicit guard for the authorized packaged normal-launch test. | absent |
+| `SUNDAY_LIVE_SETTINGS_QUALIFICATION` | Explicit guard for the authorized packaged multi-instance test. | absent |
 
 `LEGACY_COMPAT=true` does not enable the legacy adapter. An exact environment
 value of `1` takes effect even when the saved preference is off. The backend
@@ -49,7 +50,7 @@ adapter, and isolation reason through diagnostics.
 
 Never put real signing values into `.env.example`, GitHub issues, build logs, or
 source control. These inputs describe optional future controlled signing
-workflows; the v1.8.15 binaries are unsigned. A build that explicitly
+workflows; the v1.8.16 binaries are unsigned. A build that explicitly
 requires signing still fails closed when its inputs are missing or invalid.
 
 ## Repository hygiene

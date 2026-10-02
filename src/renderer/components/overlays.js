@@ -415,7 +415,7 @@ function renderPersonJoinDialog() {
   }).join('');
   const n = join.selectedIds.size;
   openModal(`
-    <div class="m-head"><h3>Plan join for ${esc(join.name || 'player')}</h3><p>Pick up to three accounts. SUNDAY Launcher preserves an exact-target launch intent for each.</p></div>
+    <div class="m-head"><h3>Join ${esc(join.name || 'player')}</h3><p>Pick ${legacyCompatibilityMode() ? 'up to three accounts' : 'one account'}. SUNDAY creates a fresh exact-target launch for each selected account.</p></div>
     <div class="m-body">
       <div class="join-account-list">${choices}</div>
       <p class="hint" style="margin:13px 0 0">Exact live-server joining is available only while client launching is active. Private or privacy-restricted servers can still block a join.</p>
@@ -423,7 +423,7 @@ function renderPersonJoinDialog() {
     <div class="m-foot">
       <button class="btn" data-action="modal-cancel" ${join.joining ? 'disabled' : ''}>Cancel</button>
       <button class="btn primary" data-action="person-join-confirm" ${!n || join.joining ? 'disabled' : ''}>
-        ${join.joining ? '<span class="spinner"></span> Preparing…' : `${icon('play')} Prepare${n ? ` for ${n} account${n === 1 ? '' : 's'}` : ''}`}
+        ${join.joining ? '<span class="spinner"></span> Launching…' : `${icon('play')} Launch${n ? ` with ${n} account${n === 1 ? '' : 's'}` : ''}`}
       </button>
     </div>`);
 }

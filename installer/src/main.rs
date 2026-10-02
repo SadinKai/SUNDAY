@@ -9,7 +9,7 @@
 //
 // Flow (fresh):     new empty folder -> Install SUNDAY Launcher -> progress -> done.
 // Existing install: explain that in-place update is unavailable -> Close.
-// Canonical uninstaller: verify registry + ledger + signatures -> exact removal.
+// Canonical uninstaller: verify registry + ledger + release identity -> exact removal.
 
 #![cfg_attr(not(feature = "console"), windows_subsystem = "windows")]
 #![allow(clippy::too_many_arguments)]
@@ -80,9 +80,41 @@ use shell::{to_wide, CSIDL_DESKTOPDIRECTORY, CSIDL_PROGRAMS};
 
 const SUNDAY_VERSION: &str = env!("SUNDAY_VERSION");
 const SUNDAY_RELEASE_PUBLISHER: &str = env!("SUNDAY_RELEASE_PUBLISHER");
+const UNSIGNED_RELEASE_IDENTITY: &str = "SUNDAY unsigned SHA-256 release";
 const APP_TITLE: &str = "SUNDAY Launcher";
 const UNINSTALL_TITLE: &str = "SUNDAY Launcher - Uninstall";
 const CURRENT_MAIN_BINARY: &str = "Sunday.exe";
+
+fn release_identity(embedded_publisher: &str) -> &str {
+    if embedded_publisher.trim().is_empty() {
+        UNSIGNED_RELEASE_IDENTITY
+    } else {
+        embedded_publisher
+    }
+}
+
+fn release_is_signed() -> bool {
+    !SUNDAY_RELEASE_PUBLISHER.trim().is_empty()
+}
+
+#[cfg(test)]
+mod release_mode_tests {
+    use super::{release_identity, UNSIGNED_RELEASE_IDENTITY};
+
+    #[test]
+    fn empty_publisher_selects_explicit_unsigned_integrity_identity() {
+        assert_eq!(release_identity(""), UNSIGNED_RELEASE_IDENTITY);
+        assert_eq!(release_identity("  "), UNSIGNED_RELEASE_IDENTITY);
+    }
+
+    #[test]
+    fn configured_publisher_preserves_signed_release_identity() {
+        assert_eq!(
+            release_identity("CN=SUNDAY Production"),
+            "CN=SUNDAY Production"
+        );
+    }
+}
 
 // SUNDAY Launcher's palette (COLORREF is 0x00BBGGRR).
 const BG: u32 = 0x0013_0F0E; // #0e0f13 window
@@ -613,26 +645,19 @@ fn verified_registered_removal(
     ),
     String,
 > {
-    if SUNDAY_RELEASE_PUBLISHER.trim().is_empty() {
-        return Err(
-            "This SUNDAY Launcher build has no embedded release publisher and cannot remove files."
-                .into(),
-        );
-    }
+    let expected_release_identity = release_identity(SUNDAY_RELEASE_PUBLISHER);
+    let signed_release = release_is_signed();
     let mut registration = shell::read_install_registration()?;
     if registration.product_guid != PRODUCT_GUID
-        || registration.publisher != SUNDAY_RELEASE_PUBLISHER
+        || registration.publisher != expected_release_identity
     {
-        return Err(
-            "Registered SUNDAY Launcher identity does not match this signed uninstaller.".into(),
-        );
+        return Err("Registered SUNDAY Launcher identity does not match this uninstaller.".into());
     }
     let current = fs::canonicalize(
         std::env::current_exe()
             .map_err(|error| format!("Could not identify the running uninstaller: {error}"))?,
     )
     .map_err(|error| format!("Could not canonicalize the running uninstaller: {error}"))?;
-    let current_identity = shell::verify_authenticode(&current, SUNDAY_RELEASE_PUBLISHER)?;
     let canonical_uninstaller = registration.install_location.join("uninstall.exe");
     if require_canonical_runner {
         let canonical = fs::canonicalize(&canonical_uninstaller).map_err(|error| {
@@ -652,16 +677,9 @@ fn verified_registered_removal(
         &registration.ledger_path,
         &registration.install_location,
         &registration.installation_id,
-        SUNDAY_RELEASE_PUBLISHER,
+        expected_release_identity,
         &allowed_shortcut_paths(),
     )?;
-    let uninstall_identity =
-        shell::verify_authenticode(&canonical_uninstaller, SUNDAY_RELEASE_PUBLISHER)?;
-    if !ledger_has_signature(&document, "uninstall.exe", &uninstall_identity) {
-        return Err(
-            "Registered uninstaller signature evidence does not match the install ledger.".into(),
-        );
-    }
     if !registration
         .main_binary_name
         .eq_ignore_ascii_case(CURRENT_MAIN_BINARY)
@@ -679,24 +697,39 @@ fn verified_registered_removal(
             "Registered SUNDAY Launcher main executable does not match the install ledger.".into(),
         );
     }
-    let launcher = registration
-        .install_location
-        .join(&registration.main_binary_name);
-    if launcher.exists() {
-        let launcher_identity = shell::verify_authenticode(&launcher, SUNDAY_RELEASE_PUBLISHER)?;
-        if !ledger_has_signature(
-            &document,
-            &registration.main_binary_name,
-            &launcher_identity,
-        ) {
+    if signed_release {
+        let current_identity = shell::verify_authenticode(&current, SUNDAY_RELEASE_PUBLISHER)?;
+        let uninstall_identity =
+            shell::verify_authenticode(&canonical_uninstaller, SUNDAY_RELEASE_PUBLISHER)?;
+        if !ledger_has_signature(&document, "uninstall.exe", &uninstall_identity) {
             return Err(
-                "SUNDAY Launcher executable signature evidence does not match the install ledger."
+                "Registered uninstaller signature evidence does not match the install ledger."
                     .into(),
             );
         }
-    }
-    if require_canonical_runner && current_identity.thumbprint != uninstall_identity.thumbprint {
-        return Err("Running uninstaller identity changed during validation.".into());
+        let launcher = registration
+            .install_location
+            .join(&registration.main_binary_name);
+        if launcher.exists() {
+            let launcher_identity =
+                shell::verify_authenticode(&launcher, SUNDAY_RELEASE_PUBLISHER)?;
+            if !ledger_has_signature(
+                &document,
+                &registration.main_binary_name,
+                &launcher_identity,
+            ) {
+                return Err(
+                    "SUNDAY Launcher executable signature evidence does not match the install ledger."
+                        .into(),
+                );
+            }
+        }
+        if require_canonical_runner && current_identity.thumbprint != uninstall_identity.thumbprint
+        {
+            return Err("Running uninstaller identity changed during validation.".into());
+        }
+    } else if !document.signatures.is_empty() {
+        return Err("Unsigned installation ledger contains unexpected signature evidence.".into());
     }
     registration = shell::migrate_legacy_registration(&registration)?;
     Ok((registration, document, plan))
@@ -705,7 +738,7 @@ fn verified_registered_removal(
 fn verified_installed_sunday() -> Option<(PathBuf, String)> {
     // Installation discovery carries no mutation authority, but it still must
     // not let a filename or registry path impersonate SUNDAY Launcher. Reuse the full
-    // signed-ledger proof before the UI treats an installation as present.
+    // ledger-bound proof before the UI treats an installation as present.
     let (registration, document, _) = verified_registered_removal(false).ok()?;
     Some((registration.install_location, document.version))
 }
@@ -734,7 +767,22 @@ fn copy_removal_helper(source: &Path, installation_id: &str) -> Result<PathBuf, 
         return Err(format!("Could not copy the removal helper: {error}"));
     }
     drop(output);
-    if let Err(error) = shell::verify_authenticode(&helper, SUNDAY_RELEASE_PUBLISHER) {
+    let helper_identity = if release_is_signed() {
+        shell::verify_authenticode(&helper, SUNDAY_RELEASE_PUBLISHER).map(|_| ())
+    } else {
+        let source_size = fs::metadata(source)
+            .map_err(|error| format!("Could not inspect the canonical uninstaller: {error}"))?
+            .len();
+        let helper_size = fs::metadata(&helper)
+            .map_err(|error| format!("Could not inspect the removal helper: {error}"))?
+            .len();
+        if source_size != helper_size || ledger::hash_file(source)? != ledger::hash_file(&helper)? {
+            Err("Unsigned removal helper does not match the ledger-bound uninstaller.".into())
+        } else {
+            Ok(())
+        }
+    };
+    if let Err(error) = helper_identity {
         let _ = fs::remove_file(&helper);
         return Err(error);
     }
@@ -786,16 +834,36 @@ fn run_removal_helper(installation_id: &str, parent_pid: u32) -> Result<(), Stri
     if !in_temporary_root || !helper_name {
         return Err("Removal helper is not running from its controlled temporary location.".into());
     }
-    shell::verify_authenticode(&current, SUNDAY_RELEASE_PUBLISHER)?;
+    if release_is_signed() {
+        shell::verify_authenticode(&current, SUNDAY_RELEASE_PUBLISHER)?;
+    }
     let parent = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) }.map_err(|_| {
         "Removal helper could not bind the canonical uninstaller process.".to_string()
     })?;
-    let (registration, _, plan) = verified_registered_removal(false)?;
+    let (registration, document, plan) = verified_registered_removal(false)?;
     if registration.installation_id != installation_id {
         unsafe {
             let _ = CloseHandle(parent);
         }
         return Err("Removal helper installation identity does not match the registry.".into());
+    }
+    if !release_is_signed() {
+        let expected = document
+            .files
+            .iter()
+            .find(|file| file.path.eq_ignore_ascii_case("uninstall.exe"))
+            .ok_or("Unsigned installation ledger is missing uninstaller evidence.")?;
+        let current_size = fs::metadata(&current)
+            .map_err(|error| format!("Could not inspect the removal helper: {error}"))?
+            .len();
+        if current_size != expected.size || ledger::hash_file(&current)? != expected.sha256 {
+            unsafe {
+                let _ = CloseHandle(parent);
+            }
+            return Err(
+                "Unsigned removal helper does not match the ledger-bound uninstaller.".into(),
+            );
+        }
     }
     let wait = unsafe { WaitForSingleObject(parent, 120_000) };
     unsafe {
@@ -826,13 +894,18 @@ fn run_removal_helper(installation_id: &str, parent_pid: u32) -> Result<(), Stri
 
 fn run_install(dest: &Path, desktop: bool, version: &str, tx: &Sender<Msg>) -> Result<(), String> {
     debug_log("run_install start");
-    if SUNDAY_RELEASE_PUBLISHER.trim().is_empty() {
-        return Err("This SUNDAY Launcher build has no embedded release publisher and cannot install files.".into());
-    }
-    let current_installer = std::env::current_exe()
-        .map_err(|error| format!("Could not identify the running installer: {error}"))?;
-    let installer_identity =
-        shell::verify_authenticode(&current_installer, SUNDAY_RELEASE_PUBLISHER)?;
+    let signed_release = release_is_signed();
+    let expected_release_identity = release_identity(SUNDAY_RELEASE_PUBLISHER);
+    let installer_identity = if signed_release {
+        let current_installer = std::env::current_exe()
+            .map_err(|error| format!("Could not identify the running installer: {error}"))?;
+        Some(shell::verify_authenticode(
+            &current_installer,
+            SUNDAY_RELEASE_PUBLISHER,
+        )?)
+    } else {
+        None
+    };
     let dest = validate_install_destination(dest)?;
     let dest = &dest;
     if let Ok(meta) = std::fs::symlink_metadata(dest) {
@@ -859,8 +932,9 @@ fn run_install(dest: &Path, desktop: bool, version: &str, tx: &Sender<Msg>) -> R
             );
         }
     }
-    // Install only the payload covered by this installer's Authenticode
-    // signature. A mutable release channel must never replace trusted bytes.
+    // Install only the closed-world, manifest-hashed payload. Signed builds add
+    // Authenticode publisher verification; unsigned builds remain explicitly
+    // integrity-only and rely on the published whole-installer SHA-256.
     let pkg =
         Package::open().ok_or("This installer is incomplete.\nDownload SUNDAY Launcher again.")?;
     let entries = pkg.entries()?;
@@ -901,26 +975,33 @@ fn run_install(dest: &Path, desktop: bool, version: &str, tx: &Sender<Msg>) -> R
         .any(|file| file.path.eq_ignore_ascii_case("WebView2Setup.exe"))
     {
         cleanup_owned_stage(&stage, parent);
-        return Err("The signed payload contains an executable dependency bootstrapper; installation is blocked.".into());
+        return Err("The release payload contains an executable dependency bootstrapper; installation is blocked.".into());
     }
-    let sunday_identity = match shell::verify_authenticode(
-        &stage.join(CURRENT_MAIN_BINARY),
-        SUNDAY_RELEASE_PUBLISHER,
-    ) {
-        Ok(identity) => identity,
-        Err(error) => {
-            cleanup_owned_stage(&stage, parent);
-            return Err(error);
-        }
-    };
-    let uninstall_identity =
-        match shell::verify_authenticode(&stage.join("uninstall.exe"), SUNDAY_RELEASE_PUBLISHER) {
+    let (sunday_identity, uninstall_identity) = if signed_release {
+        let sunday_identity = match shell::verify_authenticode(
+            &stage.join(CURRENT_MAIN_BINARY),
+            SUNDAY_RELEASE_PUBLISHER,
+        ) {
             Ok(identity) => identity,
             Err(error) => {
                 cleanup_owned_stage(&stage, parent);
                 return Err(error);
             }
         };
+        let uninstall_identity = match shell::verify_authenticode(
+            &stage.join("uninstall.exe"),
+            SUNDAY_RELEASE_PUBLISHER,
+        ) {
+            Ok(identity) => identity,
+            Err(error) => {
+                cleanup_owned_stage(&stage, parent);
+                return Err(error);
+            }
+        };
+        (Some(sunday_identity), Some(uninstall_identity))
+    } else {
+        (None, None)
+    };
 
     // The destination was proven absent or empty above. Activation is one
     // directory rename, never a file-by-file mutation of an existing tree.
@@ -1025,28 +1106,32 @@ fn run_install(dest: &Path, desktop: bool, version: &str, tx: &Sender<Msg>) -> R
         }
     }
 
-    let signatures = vec![
-        AuthenticodeEvidence {
-            path: "installer".into(),
-            publisher: installer_identity.subject,
-            thumbprint: installer_identity.thumbprint,
-        },
-        AuthenticodeEvidence {
-            path: CURRENT_MAIN_BINARY.into(),
-            publisher: sunday_identity.subject,
-            thumbprint: sunday_identity.thumbprint,
-        },
-        AuthenticodeEvidence {
-            path: "uninstall.exe".into(),
-            publisher: uninstall_identity.subject,
-            thumbprint: uninstall_identity.thumbprint,
-        },
-    ];
+    let signatures = match (installer_identity, sunday_identity, uninstall_identity) {
+        (Some(installer), Some(sunday), Some(uninstaller)) => vec![
+            AuthenticodeEvidence {
+                path: "installer".into(),
+                publisher: installer.subject,
+                thumbprint: installer.thumbprint,
+            },
+            AuthenticodeEvidence {
+                path: CURRENT_MAIN_BINARY.into(),
+                publisher: sunday.subject,
+                thumbprint: sunday.thumbprint,
+            },
+            AuthenticodeEvidence {
+                path: "uninstall.exe".into(),
+                publisher: uninstaller.subject,
+                thumbprint: uninstaller.thumbprint,
+            },
+        ],
+        (None, None, None) => Vec::new(),
+        _ => return Err("Release identity verification did not complete consistently.".into()),
+    };
     let ledger_path = match ledger::write_ledger(
         dest,
         &installation_id,
         version,
-        SUNDAY_RELEASE_PUBLISHER,
+        expected_release_identity,
         &verified.files,
         &shortcuts,
         signatures,
@@ -1066,7 +1151,7 @@ fn run_install(dest: &Path, desktop: bool, version: &str, tx: &Sender<Msg>) -> R
         &installation_id,
         PRODUCT_GUID,
         &ledger_path,
-        SUNDAY_RELEASE_PUBLISHER,
+        expected_release_identity,
     ) {
         ledger::rollback_new_install(dest, &verified.files, &shortcuts);
         return Err(error);
@@ -3058,7 +3143,7 @@ fn start_uninstall(a: &mut App) {
     let (tx, rx) = channel::<Msg>();
     a.rx = Some(rx);
     a.busy = true;
-    set_text(a, IDC_SUB, "Verifying signed ownership evidence…");
+    set_text(a, IDC_SUB, "Verifying ownership evidence…");
     unsafe {
         let _ = SetTimer(Some(a.hwnd), IDT_POLL, 40, None);
     }

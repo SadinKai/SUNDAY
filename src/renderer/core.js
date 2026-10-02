@@ -72,6 +72,7 @@ const state = {
   accounts: [],
   selected: new Set(),     // selected account ids (shared across views)
   launchPlans: [],         // persisted coordinator state; never contains credentials
+  lastLaunchFailure: null, // sanitized backend reason only
   launchMode: 'account',   // 'account' | 'plain'
   placeId: '',
   history: [],
@@ -107,6 +108,7 @@ const state = {
 const UPDATE_CHECK_KEY_STORAGE = 'sunday-update-check-idempotency-v1';
 const FINAL_JOB_STATES = new Set(['CANCELLED', 'SUCCEEDED', 'FAILED']);
 let updateCheckSessionKey = null;
+let retryLastLaunch = null;
 
 function updateCheckIdempotencyKey() {
   if (updateCheckSessionKey) return updateCheckSessionKey;

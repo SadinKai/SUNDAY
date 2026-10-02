@@ -26,7 +26,7 @@ test('production backend exposes capability gates and no updater applier imports
   const source = read('src/main/tauri-backend.js');
   const bridge = read('src/renderer/tauri-bridge.js');
   const rust = read('src-tauri/src/lib.rs');
-  assert.match(source, /robloxIsolation:[\s\S]*STATES\.UNAVAILABLE/);
+  assert.match(source, /robloxIsolation:[\s\S]*STATES\.PREPARING/);
   assert.match(source, /updaterApply:[\s\S]*STATES\.UNAVAILABLE/);
   assert.match(source, /registerUpdateJobs\(jobs, updater\);[\s\S]*jobs\.resumePending\(\)/);
   assert.match(source, /startUpdateCheck\(jobs, payload\.idempotencyKey\)/);
@@ -45,7 +45,8 @@ test('production launch flow is adapter-bound and host launch intents contain no
   const adapter = read('src/main/roblox-isolation-adapter.js');
   const bridge = read('src/renderer/tauri-bridge.js');
   assert.match(backend, /selectRobloxIsolationAdapter\(/);
-  assert.match(adapter, /const enabled = legacyCompatRequested\(environment\);[\s\S]*if \(!enabled\)[\s\S]*new UnavailableRobloxIsolationAdapter/);
+  assert.match(adapter, /const enabled = legacyCompatRequested\(environment\);[\s\S]*if \(!enabled\)[\s\S]*new SingleClientRobloxIsolationAdapter/);
+  assert.match(read('src/main/single-client-roblox-isolation-adapter.js'), /class SingleClientRobloxIsolationAdapter/);
   assert.match(adapter, /opts\.loadLegacy \|\| \(\(\) => require\('\.\/legacy-roblox-isolation-adapter'\)/);
   assert.match(backend, /new LaunchCoordinator\(/);
   assert.doesNotMatch(backend, /require\('\.\/launcher'\)|require\('\.\/clones'\)|launchIsolated|doLaunch/);
@@ -60,6 +61,9 @@ test('production launch flow is adapter-bound and host launch intents contain no
   assert.match(backend, /accounts\.getFollowContext/);
   assert.match(backend, /accountHandle: operation\.accountId/);
   assert.match(backend, /launchUri: launch\.deeplink/);
+  assert.match(backend, /sanitizedLaunchDiagnostics/);
+  assert.match(rendererJavaScript(), /Copy sanitized launch diagnostics/);
+  assert.doesNotMatch(read('src/renderer/actions.js').match(/async function copyDiagnostics\([\s\S]*?\n\}/)[0], /state\.logs|userData|robloxPath|capability/);
 });
 
 test('legacy compatibility is quarantined, explicit, and has no broad process command', () => {
@@ -89,7 +93,7 @@ test('legacy compatibility is quarantined, explicit, and has no broad process co
   assert.match(renderer, /selection\.selectedAdapter === 'LegacyRobloxIsolationAdapter'/);
   assert.match(renderer, /selection\.legacyCompatEnabled === true/);
   assert.match(renderer, /api\.adapterSelection\(\)/);
-  assert.match(renderer, /blocked; prepare again to evaluate the current legacy adapter/);
+  assert.match(renderer, /Normal mode launches one owned client/);
 });
 
 test('Phase 6 production boundary is provider-neutral and synthetic code is artifact-excluded', () => {
@@ -193,6 +197,10 @@ test('installer removal is ledger-bound and never recursively deletes an install
   const shell = read('installer/src/shell.rs');
   assert.match(main, /A copied or renamed uninstaller has no authority/);
   assert.match(main, /verify_authenticode\(&canonical_uninstaller/);
+  assert.match(main, /UNSIGNED_RELEASE_IDENTITY/);
+  assert.match(main, /Unsigned removal helper does not match the ledger-bound uninstaller/);
+  assert.match(main, /document\.signatures\.is_empty/);
+  assert.match(main, /ledger::hash_file\(&current\).*expected\.sha256/s);
   assert.match(main, /fn verified_installed_sunday\(\)[\s\S]*verified_registered_removal\(false\)/);
   assert.match(main, /fn validate_install_destination\([\s\S]*canonical_parent\.starts_with\(&canonical_local\)/);
   assert.match(ledger, /owned file changed after removal preflight and was preserved/);
@@ -237,6 +245,7 @@ test('manual release packaging rejects runtime residue and reparse points', () =
   assert.match(audit, /authoredForbiddenBindingsFound/);
   assert.match(audit, /networkOriginScan/);
   assert.match(audit, /insecureHttpOrigins/);
+  assert.doesNotMatch(audit, /disposable-VM qualification|not releasable production artifacts/);
 });
 
 test('SUNDAY Launcher is canonical and former identity values are isolated', () => {
@@ -320,11 +329,31 @@ test('current package, install, shortcut, and launch paths use Sunday.exe', () =
   assert.match(payload, /\["sunday\.exe", "node\.exe", "uninstall\.exe"\]/);
 });
 
-test('supported native UI entry points require an isolated VM declaration', () => {
-  for (const file of ['smoke.js', 'ui-features.js']) {
-    const source = read(`test/${file}`);
-    assert.match(source.slice(0, 500), /SUNDAY_ISOLATED_VM/);
-  }
+test('v1.8.16 release qualification uses packaged real-Windows launch gates, not provider qualification', () => {
+  const packageJson = JSON.parse(read('package.json'));
+  const release = read('docs/developer/release.md');
+  const workflow = read('.github/workflows/build-installer.yml');
+  assert.equal(packageJson.scripts['test:isolation-real'], undefined);
+  assert.equal(packageJson.scripts['test:smoke:isolated-vm'], undefined);
+  assert.equal(packageJson.scripts['test:ui:isolated-vm'], undefined);
+  assert.match(release, /existing Settings-selected[\s\S]*LegacyRobloxIsolationAdapter[\s\S]*real Windows/);
+  assert.doesNotMatch(workflow, /SUNDAY_ISOLATED_VM|qualify-windows-vm|test:isolation-real|environment-broker/i);
+});
+
+test('live packaged launch qualification is explicit, guarded, and credential silent', () => {
+  const packageJson = JSON.parse(read('package.json'));
+  const normal = read('scripts/qualify-singleclient-live.mjs');
+  const legacy = read('scripts/qualify-settings-live.mjs');
+  assert.equal(packageJson.scripts['test:singleclient-packaged-live'], 'node scripts/qualify-singleclient-live.mjs');
+  assert.match(normal.slice(0, 2500), /SUNDAY_LIVE_SINGLECLIENT_QUALIFICATION !== '1'/);
+  assert.match(normal, /delete environment\.LEGACY_COMPAT/);
+  assert.match(normal, /SingleClientRobloxIsolationAdapter/);
+  assert.match(normal, /launchFromAccountPage[\s\S]*launchFromMainPage/);
+  assert.match(normal, /window\.sunday\.instances\.focus[\s\S]*window\.sunday\.instances\.restart[\s\S]*stopExact/);
+  assert.doesNotMatch(normal, /console\.log\([^)]*(?:accountId|capability|launchUri)/i);
+  assert.match(legacy.slice(0, 2500), /SUNDAY_LIVE_SETTINGS_QUALIFICATION !== '1'/);
+  assert.match(legacy, /selectedAccountIds = accountIds\.slice\(0, 3\)/);
+  assert.match(legacy, /SingleClientRobloxIsolationAdapter/);
 });
 
 test('renderer is split into ordered responsibility modules without a framework migration', () => {

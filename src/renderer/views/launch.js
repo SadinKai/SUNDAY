@@ -200,12 +200,46 @@ function rememberLaunchPlan(plan) {
 
 function handlePreparedPlan(response) {
   if (response && response.plan) rememberLaunchPlan(response.plan);
-  if (!(response && response.prepared)) return false;
+  if (!(response && response.prepared) || response.failureCode) return false;
   const count = response.selectedCount || (response.plan && response.plan.operations && response.plan.operations.length) || 0;
   toast(legacyCompatibilityMode()
     ? `${count}-account launch plan prepared`
     : `${count}-account plan saved — execution is unavailable right now`);
   return true;
+}
+
+function presentLaunchFailure(response, retry) {
+  const failedResult = response && Array.isArray(response.results)
+    ? response.results.find(result => !result.ok)
+    : null;
+  const reason = String(response && response.error || failedResult && failedResult.reason || 'Roblox could not be launched.');
+  const code = String(response && response.failureCode || failedResult && failedResult.failureCode || 'LAUNCH_FAILED');
+  const actions = Array.isArray(response && response.actions) ? response.actions.slice() : ['RETRY', 'VIEW_DIAGNOSTICS'];
+  state.lastLaunchFailure = { reason, code, actions };
+  retryLastLaunch = typeof retry === 'function' ? retry : null;
+  toast(reason, 'bad');
+  if (state.view !== 'instances') setView('instances');
+  else views.instances();
+}
+
+function clearLaunchFailure() {
+  state.lastLaunchFailure = null;
+  retryLastLaunch = null;
+}
+
+function launchFailureBanner() {
+  const failure = state.lastLaunchFailure;
+  if (!failure) return '';
+  const actions = new Set(failure.actions || []);
+  return `<section class="settings-note launch-failure" role="alert">
+    <div><b>Launch needs attention</b><div>${esc(failure.reason)}</div></div>
+    <div class="inline">
+      ${retryLastLaunch && actions.has('RETRY') ? `<button class="btn sm primary" data-action="retry-last-launch">${icon('refresh')} Retry</button>` : ''}
+      ${actions.has('OPEN_ACCOUNTS') ? `<button class="btn sm" data-action="goto-accounts">${icon('users')} Accounts</button>` : ''}
+      ${actions.has('OPEN_SETTINGS') ? `<button class="btn sm" data-action="goto-settings">${icon('settings')} Open Settings</button>` : ''}
+      <button class="btn sm" data-action="goto-diagnostics">${icon('activity')} View Diagnostics</button>
+    </div>
+  </section>`;
 }
 
 function launchPlanRows() {
@@ -263,16 +297,19 @@ function launchActionState(selectedCount, destination) {
     && (legacyCompatibilityMode() || capabilityAvailable('robloxIsolation'));
   const hasSelection = selectedCount > 0;
   const destinationValid = !(destination && destination.invalid);
+  const countAllowed = legacyCompatibilityMode() || selectedCount <= 1;
 
-  let readiness = executionAvailable ? 'Ready to launch' : 'Ready to prepare';
+  let readiness = executionAvailable ? 'Ready to launch' : 'Launch unavailable';
   if (!hasSelection) readiness = 'Select at least one account';
   else if (!destinationValid) readiness = 'Check destination';
-  else if (!executionAvailable && !robloxDetected) readiness = 'Roblox not detected · plan only';
+  else if (!countAllowed) readiness = 'Enable Multi-instance mode for multiple accounts';
+  else if (!executionAvailable && !robloxDetected) readiness = 'Roblox not detected · locate Roblox to continue';
 
   return {
     executionAvailable,
-    enabled: hasSelection && destinationValid,
-    label: executionAvailable ? 'Launch' : 'Prepare plan',
+    enabled: hasSelection && destinationValid && countAllowed,
+    label: executionAvailable ? 'Launch' : (robloxDetected ? 'View Diagnostics' : 'Locate Roblox'),
+    action: executionAvailable ? 'launch' : (robloxDetected ? 'goto-diagnostics' : 'goto-settings'),
     readiness,
   };
 }
@@ -303,7 +340,7 @@ views.instances = function () {
   const runtime = instanceRuntimeStatus(s);
 
   const hasAccounts = state.accounts.length > 0;
-  const mode = hasAccounts ? state.launchMode : 'plain';
+  const mode = hasAccounts ? state.launchMode : 'account';
   const selectedCount = state.selected.size;
   const savedSessions = loadSessions();
 
@@ -342,7 +379,7 @@ views.instances = function () {
         ${stageHeading(1, 'Account roster', 'Choose who plays', 'roster-heading')}
         <div class="launch-roster-toolbar">
           <label class="launch-account-search" for="launch-account-search">${icon('search')}<span class="sr-only">Search accounts</span><input id="launch-account-search" type="search" placeholder="Search accounts…" autocomplete="off"></label>
-          <span class="launch-roster-count" id="launch-selection-count" aria-live="polite">${selectedCount} / 3</span>
+          <span class="launch-roster-count" id="launch-selection-count" aria-live="polite">${selectedCount} / ${legacyCompatibilityMode() ? 3 : 1}</span>
         </div>
         <div class="launch-roster-list">${hasAccounts ? accountRows : `
           <div class="launch-roster-empty"><span class="launch-account-avatar">${icon('users')}</span><div><b>No accounts yet</b><small>Add an account to build a launch roster.</small></div></div>`}
@@ -367,7 +404,7 @@ views.instances = function () {
         <div class="launch-action-review" aria-live="polite">
           <span><b id="launch-review-count">${selectedCount} client${selectedCount === 1 ? '' : 's'}</b><small id="launch-account-readiness">${esc(accountLaunch.readiness)}</small></span>
         </div>
-        <button class="btn primary launch-primary-action" data-action="launch-accounts" aria-describedby="launch-account-readiness" ${accountLaunch.enabled ? '' : 'disabled'}>${icon('play')} <span id="lp-count-label">${accountLaunch.label}</span></button>
+        <button class="btn primary launch-primary-action" data-action="${accountLaunch.action === 'launch' ? 'launch-accounts' : accountLaunch.action}" aria-describedby="launch-account-readiness" ${accountLaunch.enabled ? '' : 'disabled'}>${icon(accountLaunch.action === 'goto-settings' ? 'settings' : (accountLaunch.action === 'goto-diagnostics' ? 'activity' : 'play'))} <span id="lp-count-label">${accountLaunch.label}</span></button>
         <p class="launch-action-context">${selectedCount || 'No'} client${selectedCount === 1 ? '' : 's'} · ${esc(destination.label)}</p>
       </section>
     </div>`;
@@ -389,7 +426,7 @@ views.instances = function () {
       <section class="launch-stage launch-stage-action">
         ${stageHeading(3, 'Launch', 'Review and launch', 'plain-launch-heading')}
         <div class="launch-action-review"><span><b>Signed-out clients</b><small id="launch-quick-readiness">${esc(quickLaunch.readiness)}</small></span></div>
-        <button class="btn primary launch-primary-action" data-action="launch-quick" aria-describedby="launch-quick-readiness">${icon('play')} ${quickLaunch.label}</button>
+        <button class="btn primary launch-primary-action" data-action="${quickLaunch.action === 'launch' ? 'launch-quick' : quickLaunch.action}" aria-describedby="launch-quick-readiness">${icon(quickLaunch.action === 'goto-settings' ? 'settings' : (quickLaunch.action === 'goto-diagnostics' ? 'activity' : 'play'))} ${quickLaunch.label}</button>
         <p class="launch-action-context">Roblox home</p>
       </section>
     </div>`;
@@ -403,6 +440,7 @@ views.instances = function () {
   mount(`
     <div class="launch-command-page">
       <h1 id="view-heading" class="sr-only">Launch</h1>
+      ${launchFailureBanner()}
       <section class="launch-workflow" aria-label="Launch workflow">
         ${accountPanel}
         ${plainPanel}
@@ -582,7 +620,7 @@ function updateAccountsLaunchButton() {
   const count = state.selected.size;
   const existing = root.querySelector('[data-account-launch-selected]');
   if (!count) { if (existing) existing.remove(); return; }
-  const html = `${icon('play')} ${legacyCompatibilityMode() ? 'Launch' : 'Prepare'} ${count} selected`;
+  const html = `${icon('play')} Launch ${count} selected`;
   if (existing) { existing.innerHTML = html; return; }
   root.insertAdjacentHTML('afterbegin', `<button class="btn sm" data-action="launch-selected" data-account-launch-selected>${html}</button>`);
 }
@@ -595,7 +633,7 @@ function updateLaunchCount() {
   if (action) action.disabled = !launchState.enabled;
   const count = state.selected.size;
   const rosterCount = $('#launch-selection-count');
-  if (rosterCount) rosterCount.textContent = `${count} / 3`;
+  if (rosterCount) rosterCount.textContent = `${count} / ${legacyCompatibilityMode() ? 3 : 1}`;
   const reviewCount = $('#launch-review-count');
   if (reviewCount) reviewCount.textContent = `${count} client${count === 1 ? '' : 's'}`;
   const readiness = $('#launch-account-readiness');

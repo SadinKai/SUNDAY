@@ -529,23 +529,88 @@ pub fn create_shortcut(
     workdir: &Path,
     description: &str,
 ) -> Result<(), String> {
+    fn shell_path(path: &Path) -> String {
+        let value = path.to_string_lossy();
+        if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else if let Some(rest) = value.strip_prefix(r"\\?\") {
+            rest.to_string()
+        } else {
+            value.into_owned()
+        }
+    }
+
+    let target_text = to_wide(&shell_path(target));
+    let workdir_text = to_wide(&shell_path(workdir));
+    let description_text = to_wide(description);
+    let shortcut_text = to_wide(&shell_path(lnk));
     unsafe {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
-            .map_err(|e| format!("shortcut setup failed\n{e}"))?;
-        link.SetPath(PCWSTR(to_wide(&target.to_string_lossy()).as_ptr()))
-            .map_err(|e| format!("shortcut setup failed\n{e}"))?;
-        link.SetWorkingDirectory(PCWSTR(to_wide(&workdir.to_string_lossy()).as_ptr()))
-            .map_err(|e| format!("shortcut setup failed\n{e}"))?;
-        link.SetDescription(PCWSTR(to_wide(description).as_ptr()))
-            .map_err(|e| format!("shortcut setup failed\n{e}"))?;
+            .map_err(|e| format!("shortcut object creation failed\n{e}"))?;
+        link.SetPath(PCWSTR(target_text.as_ptr()))
+            .map_err(|e| format!("shortcut target setup failed\n{e}"))?;
+        link.SetWorkingDirectory(PCWSTR(workdir_text.as_ptr()))
+            .map_err(|e| format!("shortcut working-directory setup failed\n{e}"))?;
+        link.SetDescription(PCWSTR(description_text.as_ptr()))
+            .map_err(|e| format!("shortcut description setup failed\n{e}"))?;
         let persist: IPersistFile = link
             .cast()
-            .map_err(|e| format!("shortcut setup failed\n{e}"))?;
+            .map_err(|e| format!("shortcut persistence setup failed\n{e}"))?;
         persist
-            .Save(PCWSTR(to_wide(&lnk.to_string_lossy()).as_ptr()), true)
+            .Save(PCWSTR(shortcut_text.as_ptr()), true)
             .map_err(|e| format!("could not save shortcut {}\n{e}", lnk.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod shortcut_tests {
+    use super::create_shortcut;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+
+    #[test]
+    fn shell_link_is_created_for_an_existing_target() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sunday-shortcut-test-{stamp}"));
+        fs::create_dir(&root).expect("create shortcut test root");
+        let workdir = root.join("SUNDAY Launcher Qualification 1.8.16");
+        fs::create_dir(&workdir).expect("create spaced work directory");
+        let target = workdir.join("Sunday.exe");
+        fs::copy(
+            std::env::current_exe().expect("current executable"),
+            &target,
+        )
+        .expect("stage shortcut target");
+        let shortcut_dir = root.join("Start Menu").join("SUNDAY Launcher");
+        fs::create_dir_all(&shortcut_dir).expect("create spaced shortcut directory");
+        let shortcut = shortcut_dir.join("SUNDAY Launcher.lnk");
+        let verbatim =
+            |path: &std::path::Path| PathBuf::from(format!(r"\\?\{}", path.to_string_lossy()));
+        create_shortcut(
+            &verbatim(&shortcut),
+            &verbatim(&target),
+            &verbatim(&workdir),
+            "SUNDAY shortcut qualification",
+        )
+        .expect("create Windows shortcut from verbatim paths");
+        assert!(shortcut.is_file());
+        fs::remove_file(shortcut).expect("remove shortcut");
+        fs::remove_dir(shortcut_dir).expect("remove shortcut leaf");
+        fs::remove_dir(root.join("Start Menu")).expect("remove shortcut parent");
+        fs::remove_file(target).expect("remove shortcut target");
+        fs::remove_dir(workdir).expect("remove work directory");
+        fs::remove_dir(root).expect("remove shortcut test root");
+    }
 }
 
 // ------------------------------------------------------------------ folder picker

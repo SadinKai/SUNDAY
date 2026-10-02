@@ -65,12 +65,13 @@ function makeBackend(ctx) {
     ? { LEGACY_COMPAT: String(process.env.LEGACY_COMPAT) }
     : {});
   const legacyReason = "LEGACY MULTI-INSTANCE MODE: Uses SUNDAY Launcher's legacy compatibility mechanism. This is not vendor supported isolation.";
+  const singleClientReason = 'NORMAL SINGLE-CLIENT MODE: Launches one SUNDAY-owned Roblox client without compatibility mode.';
   const gates = new CapabilityGates({
     singleOwner: { state: STATES.ACTIVE, reason: 'The Tauri single-instance broker owns this backend.' },
     processControl: { state: STATES.PREPARING, reason: 'Native process identity validation is initializing.' },
     robloxIsolation: {
-      state: STATES.UNAVAILABLE,
-      reason: 'Multi-instance mode is disabled. Enable it in Settings, then restart SUNDAY.',
+      state: STATES.PREPARING,
+      reason: 'Normal single-client launch is initializing.',
     },
     updaterApply: {
       state: STATES.UNAVAILABLE,
@@ -80,10 +81,6 @@ function makeBackend(ctx) {
   store.configure(userData, logger, { assertOwner: () => gates.require('singleOwner') });
   const settings = store.getSettings();
   const legacyCompatibility = resolveLegacyCompatibility(settings, externalAdapterEnvironment);
-  if (legacyCompatibility.enabled) {
-    gates.set('robloxIsolation', STATES.ACTIVE, legacyReason);
-  }
-
   // Update application is intentionally unavailable until a pinned signing
   // key, monotonic manifest and side-by-side rollback path are provisioned.
   const lastUpdateResult = null;
@@ -91,8 +88,10 @@ function makeBackend(ctx) {
   try { native.init(); } catch (err) { logger.warn('Native initialization failed', err && err.message); }
   if (native.isAvailable()) {
     gates.set('processControl', STATES.QUALIFIED, 'Native process creation identity and image-path revalidation are available.');
+    gates.set('robloxIsolation', STATES.ACTIVE, legacyCompatibility.enabled ? legacyReason : singleClientReason);
   } else {
     gates.set('processControl', STATES.FAILED, native.getLoadError() || 'Native process validation is unavailable.');
+    gates.set('robloxIsolation', STATES.FAILED, native.getLoadError() || 'Windows process identity validation is unavailable.');
   }
   const processCapabilities = new ProcessCapabilityRegistry(native);
   const slotLeases = new SlotLeaseManager({
@@ -154,7 +153,16 @@ function makeBackend(ctx) {
   const isolationReason = gates.get('robloxIsolation').reason;
   const isolationAdapter = selectRobloxIsolationAdapter({
     reason: isolationReason,
+    singleReason: singleClientReason,
     environment: legacyCompatibility.selectorEnvironment,
+    singleOptions: {
+      logger,
+      nativeApi: native,
+      processCapabilities,
+      ownerId,
+      monitor,
+      locateRoblox: () => roblox.locate(store.getSettings()),
+    },
     legacyOptions: {
       logger,
       nativeApi: native,
@@ -208,7 +216,7 @@ function makeBackend(ctx) {
         },
       };
     },
-    operationTimeoutMs: legacyCompatibility.enabled ? 90000 : 30000,
+    operationTimeoutMs: legacyCompatibility.enabled ? 90000 : 70000,
   });
   launchCoordinator.on('update', plan => emit('launch-plan:update', plan));
 
@@ -262,7 +270,7 @@ function makeBackend(ctx) {
     if (typeof isolationAdapter.reconcile === 'function') {
       isolationAdapter.reconcile()
         .then(exits => { for (const evidence of exits) keeper.onOwnedExit(evidence); })
-        .catch(error => logger.warn('Legacy ownership reconciliation failed', error && error.message));
+        .catch(error => logger.warn('Owned Roblox reconciliation failed', error && error.message));
     }
   });
   monitor.start();
@@ -286,7 +294,7 @@ function makeBackend(ctx) {
       version: loc.version,
       source: loc.source,
       candidates: loc.candidates,
-      multiInstance: gates.permits('robloxIsolation'),
+      multiInstance: legacyCompatibility.enabled,
       ffiAvailable: native.isAvailable(),
       ffiError: native.getLoadError(),
       adapterSelection: Object.assign({}, adapterSelection),
@@ -294,9 +302,9 @@ function makeBackend(ctx) {
         state: isolationState(),
         mode: adapterSelection.selectedAdapter === 'LegacyRobloxIsolationAdapter'
           ? 'LEGACY_COMPAT'
-          : 'SAFE_UNAVAILABLE',
+          : 'NORMAL_SINGLE_CLIENT',
         implementation: adapterSelection.selectedAdapter,
-        qualified: false,
+        qualified: native.isAvailable(),
         reason: adapterSelection.reason,
       },
       launchPlans: {
@@ -668,6 +676,41 @@ function makeBackend(ctx) {
     async diag_get() {
       const settings = store.getSettings();
       const loc = roblox.locate(settings);
+      const adapterDiagnostics = typeof isolationAdapter.diagnostics === 'function' ? isolationAdapter.diagnostics() : null;
+      const latestPlan = launchCoordinator.list(1)[0] || null;
+      const latestFailure = latestPlan && Array.isArray(latestPlan.operations)
+        ? latestPlan.operations.find(operation => operation.state !== 'RUNNING' && operation.reason)
+        : null;
+      const sanitizedLaunchDiagnostics = {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        sundayVersion: appVersion,
+        windows: { type: os.type(), release: os.release(), arch: process.arch },
+        roblox: {
+          detected: !!loc.found,
+          version: loc.version || null,
+          source: loc.source || 'none',
+          executableName: loc.found ? 'RobloxPlayerBeta.exe' : null,
+        },
+        adapter: {
+          selected: adapterSelection.selectedAdapter,
+          state: adapterSelection.isolationState,
+          activationSource: adapterSelection.legacyCompatActivationSource,
+          multiInstanceEnabled: adapterSelection.legacyCompatEnabled,
+        },
+        processIdentityAvailable: native.isAvailable(),
+        latestLaunch: latestPlan ? {
+          at: latestPlan.updatedAt,
+          state: latestPlan.state,
+          selectedCount: Array.isArray(latestPlan.operations) ? latestPlan.operations.length : 0,
+          failureCode: latestFailure && latestFailure.failureCode || latestPlan.failureCode || null,
+          failureStage: latestFailure && latestFailure.failureStage || null,
+          reason: latestFailure && latestFailure.reason || latestPlan.reason || null,
+          pidAssigned: !!(latestPlan.operations || []).some(operation => Number(operation.pid) > 0),
+          capabilityAssigned: !!(latestPlan.operations || []).some(operation => !!operation.capability),
+        } : null,
+        adapterLastFailure: adapterDiagnostics && adapterDiagnostics.lastFailure || null,
+      };
       return {
         ok: true,
         diagnostics: {
@@ -698,12 +741,13 @@ function makeBackend(ctx) {
           isolationState: adapterSelection.isolationState,
           isolationReason: adapterSelection.reason,
           isolationAdapter: `${adapterSelection.isolationState}: ${adapterSelection.reason}`,
-          legacyCompatibility: typeof isolationAdapter.diagnostics === 'function' ? isolationAdapter.diagnostics() : null,
+          legacyCompatibility: adapterDiagnostics,
           robloxFound: loc.found,
           robloxPath: loc.playerPath,
           robloxVersion: loc.version,
           robloxSource: loc.source,
           candidates: loc.candidates,
+          sanitizedLaunchDiagnostics,
         },
       };
     },

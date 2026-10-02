@@ -18,6 +18,10 @@ const { LegacyCloneManager, LegacyRobloxIsolationAdapter } = require('../src/mai
 
 test('LEGACY_COMPAT must equal 1 before legacy implementation is loaded', async () => {
   let loads = 0;
+  let singleLoads = 0;
+  class SelectedSingle {
+    async preflight() { return { ok: true, state: ISOLATION_STATES.ACTIVATED, reason: 'normal' }; }
+  }
   for (const [label, environment, observedValue] of [
     ['absent', {}, 'ABSENT'],
     ['zero', { LEGACY_COMPAT: '0' }, '0'],
@@ -26,19 +30,22 @@ test('LEGACY_COMPAT must equal 1 before legacy implementation is loaded', async 
     const off = selectRobloxIsolationAdapter({
       environment,
       reason: 'safe default',
+      singleReason: 'normal single-client',
+      loadSingle() { singleLoads += 1; return SelectedSingle; },
       loadLegacy() { loads += 1; throw new Error('must not load'); },
     });
     assert.equal(loads, 0, `${label} must not load the legacy implementation`);
-    assert.equal(off.constructor.name, 'UnavailableRobloxIsolationAdapter');
-    assert.equal((await off.preflight()).state, ISOLATION_STATES.UNAVAILABLE);
+    assert.equal(off.constructor.name, 'SelectedSingle');
+    assert.equal((await off.preflight()).state, ISOLATION_STATES.ACTIVATED);
     assert.deepEqual(adapterSelectionDiagnostics(off), {
       legacyCompatEnabled: false,
       legacyCompatEnvironmentValue: observedValue,
-      selectedAdapter: 'UnavailableRobloxIsolationAdapter',
-      isolationState: ISOLATION_STATES.UNAVAILABLE,
-      reason: 'safe default',
+      selectedAdapter: 'SelectedSingle',
+      isolationState: ISOLATION_STATES.ACTIVATED,
+      reason: 'normal single-client',
     });
   }
+  assert.equal(singleLoads, 3);
   assert.equal(legacyCompatRequested({ LEGACY_COMPAT: 'true' }), false);
   assert.equal(legacyCompatRequested({ LEGACY_COMPAT: '1' }), true);
 
@@ -139,6 +146,7 @@ function fixture(options = {}) {
     stableSamples: 1,
     launchTimeoutMs: 500,
     requireWindow: true,
+    forensicPath: options.forensicPath || '',
   });
   return { adapter, processes, registry, monitor };
 }
@@ -184,6 +192,30 @@ test('legacy adapter owns exact clients and close/restart leaves siblings alive'
     assert.equal(processes.length, 1);
   } finally {
     adapter.shutdown();
+  }
+});
+
+test('legacy forensic launch evidence never records the raw launch URI or ticket', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sunday-forensic-redaction-'));
+  const forensicPath = path.join(root, 'launch.jsonl');
+  const secret = 'synthetic-ticket-MUST-NOT-LEAVE-BOUNDARY';
+  const { adapter } = fixture({ forensicPath });
+  try {
+    await adapter.preflight();
+    const allocated = await adapter.allocateInstance({ operationId: 'operation-secret', accountId: 'account-a' });
+    const launched = await adapter.launch({
+      mode: 'deeplink',
+      launchUri: `roblox-player:gameinfo:${secret}`,
+      profileName: 'account-a',
+    }, { environmentId: allocated.environmentId, operation: { operationId: 'operation-secret', accountId: 'account-a' } });
+    assert.equal(launched.ok, true);
+    const persisted = fs.readFileSync(forensicPath, 'utf8');
+    assert.doesNotMatch(persisted, new RegExp(secret));
+    assert.doesNotMatch(persisted, /roblox-player:/i);
+    assert.match(persisted, /"hasLaunchUri":true/);
+  } finally {
+    adapter.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

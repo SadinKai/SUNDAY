@@ -174,16 +174,16 @@ function environmentValue(environment) {
     : 'ABSENT';
 }
 
-function recordSelection(adapter, environment, legacyCompatEnabled, reason) {
+function recordSelection(adapter, environment, legacyCompatEnabled, reason, isolationState) {
   const selection = Object.freeze({
     legacyCompatEnabled,
     legacyCompatEnvironmentValue: environmentValue(environment),
     selectedAdapter: adapter && adapter.constructor && adapter.constructor.name
       ? adapter.constructor.name
       : 'UnknownRobloxIsolationAdapter',
-    isolationState: legacyCompatEnabled
+    isolationState: isolationState || (legacyCompatEnabled
       ? ISOLATION_STATES.LEGACY_COMPAT
-      : ISOLATION_STATES.UNAVAILABLE,
+      : ISOLATION_STATES.ACTIVATED),
     reason: String(reason || DEFAULT_REASON),
   });
   adapterSelections.set(adapter, selection);
@@ -206,13 +206,15 @@ function selectRobloxIsolationAdapter(options) {
   const environment = opts.environment || process.env;
   const enabled = legacyCompatRequested(environment);
   if (!enabled) {
-    const adapter = new UnavailableRobloxIsolationAdapter(opts.reason);
-    return recordSelection(adapter, environment, false, adapter.reason);
+    const loadSingle = opts.loadSingle || (() => require('./single-client-roblox-isolation-adapter').SingleClientRobloxIsolationAdapter);
+    const SingleClientRobloxIsolationAdapter = loadSingle();
+    const adapter = new SingleClientRobloxIsolationAdapter(opts.singleOptions || {});
+    return recordSelection(adapter, environment, false, opts.singleReason || 'Normal single-client launch is active.', ISOLATION_STATES.ACTIVATED);
   }
   const loadLegacy = opts.loadLegacy || (() => require('./legacy-roblox-isolation-adapter').LegacyRobloxIsolationAdapter);
   const LegacyRobloxIsolationAdapter = loadLegacy();
   const adapter = new LegacyRobloxIsolationAdapter(opts.legacyOptions || {});
-  return recordSelection(adapter, environment, true, opts.reason);
+  return recordSelection(adapter, environment, true, opts.reason, ISOLATION_STATES.LEGACY_COMPAT);
 }
 
 module.exports = {

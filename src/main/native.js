@@ -250,6 +250,7 @@ function listProcesses(imageName) {
       if (String(entry.szExeFile || '').toLowerCase() === wanted) {
         result.push({
           pid: entry.th32ProcessID,
+          parentPid: entry.th32ParentProcessID,
           memBytes: workingSetOf(entry.th32ProcessID),
           executablePath: executablePathOf(entry.th32ProcessID),
           processIdentity: processIdentityOf(entry.th32ProcessID),
@@ -263,6 +264,20 @@ function listProcesses(imageName) {
   } finally {
     if (snapshot) try { CloseHandle(snapshot); } catch (_) {}
   }
+}
+
+function windowPreferenceScore(value) {
+  const className = String(value && value.className || '').toUpperCase();
+  if (className === '#32770') return 400;
+  if (className === 'WINDOWSCLIENT') return value && value.responding === false ? 250 : 300;
+  if (String(value && value.title || '').trim()) return 100;
+  return 10;
+}
+
+function preferWindow(previous, candidate) {
+  return !previous || windowPreferenceScore(candidate) > windowPreferenceScore(previous)
+    ? candidate
+    : previous;
 }
 
 function enumerateWindows(pids) {
@@ -295,9 +310,7 @@ function enumerateWindows(pids) {
         }
         const responding = IsHungAppWindow ? !IsHungAppWindow(hwnd) : true;
         const previous = out.get(pid[0]);
-        if (!previous || (!previous.title && title)) out.set(pid[0], {
-          hwnd, title, className, rect, responding,
-        });
+        out.set(pid[0], preferWindow(previous, { hwnd, title, className, rect, responding }));
       } catch (_) {}
       return true;
     }, koffi.pointer(EnumWindowsProto));
@@ -374,5 +387,5 @@ module.exports = {
   init, isAvailable, getLoadError,
   listProcesses, executablePathOf, processIdentityOf, fileIdentityOfPath,
   processFingerprintOf, terminateOwned,
-  windowInfoForPids, focusOwned, tileOwned,
+  windowInfoForPids, focusOwned, tileOwned, preferWindow,
 };

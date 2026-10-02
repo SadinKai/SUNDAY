@@ -103,7 +103,8 @@ test('guest launch failure remains local and does not disturb a sibling environm
     const launched = await f.coordinator.prepare(request(2));
     assert.equal(launched.ok, false);
     assert.deepEqual(launched.plan.operations.map(item => item.state), ['RUNNING', 'FAILED']);
-    assert.match(launched.plan.operations[1].reason, /launch failure/i);
+    assert.equal(launched.plan.operations[1].failureCode, 'LAUNCH_FAILED');
+    assert.match(launched.plan.operations[1].reason, /could not be launched/i);
     assert.equal((await f.adapter.observe(launched.plan.operations[0].capability, { operationId: 'sibling-still-running' })).status, 'RUNNING');
     await stopAndRelease(f, launched.plan);
   } finally { await f.cleanup(); }

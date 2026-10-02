@@ -612,7 +612,7 @@ async function fetchProfileExtras(a) {
   if (!id) return;
   const grab = async (url) => {
     try {
-      const res = await fetchRoblox(url, { headers: { 'User-Agent': 'SUNDAY-Launcher/1.8.15', 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
+      const res = await fetchRoblox(url, { headers: { 'User-Agent': 'SUNDAY-Launcher/1.8.16', 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
       return res.ok ? await res.json() : null;
     } catch (_) { return null; }
   };

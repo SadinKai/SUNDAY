@@ -37,6 +37,19 @@ document.addEventListener('click', async (e) => {
     case 'goto-diagnostics': setView('diagnostics'); break;
     case 'goto-accounts': setView('accounts'); break;
     case 'goto-launch': setView('instances'); break;
+    case 'retry-last-launch': {
+      if (!retryLastLaunch) break;
+      elAction.disabled = true;
+      const retry = retryLastLaunch;
+      const r = await retry();
+      if (r && r.ok) {
+        clearLaunchFailure();
+        toast(`Launched ${r.launched || 1} client${(r.launched || 1) === 1 ? '' : 's'}`, 'good');
+        await loadInstances();
+        if (state.view === 'instances') views.instances();
+      } else presentLaunchFailure(r, retry);
+      break;
+    }
 
     case 'watch-toggle': {
       const watching = toggleWatch(elAction.dataset.user, elAction.dataset.name);
@@ -67,7 +80,10 @@ document.addEventListener('click', async (e) => {
     }
     case 'toggle-account': {
       if (state.selected.has(id)) state.selected.delete(id);
-      else if (state.selected.size >= 3) { toast('Launch plans support up to 3 accounts', 'bad'); break; }
+      else if (state.selected.size >= (legacyCompatibilityMode() ? 3 : 1)) {
+        toast('Normal mode launches one account. Enable Multi-instance mode in Settings for up to three.', 'bad');
+        break;
+      }
       else state.selected.add(id);
       // update chip + card states without full re-render
       findAllByData(document, 'id', id).filter(el => el.classList.contains('chip') || el.classList.contains('roster-account')).forEach(c => {
@@ -94,8 +110,8 @@ document.addEventListener('click', async (e) => {
       const r = await call(() => api.launch.quick(n));
       elAction.disabled = false;
       if (handlePreparedPlan(r)) break;
-      if (r && r.ok) toast(`Launched ${r.launched} client${r.launched === 1 ? '' : 's'}` + (r.failed ? `, ${r.failed} failed` : ''), 'good');
-      else toast((r && r.error) || 'Launch failed', 'bad');
+      if (r && r.ok) { clearLaunchFailure(); toast(`Launched ${r.launched} client${r.launched === 1 ? '' : 's'}` + (r.failed ? `, ${r.failed} failed` : ''), 'good'); }
+      else presentLaunchFailure(r, () => call(() => api.launch.quick(n)));
       break;
     }
     case 'launch-accounts': case 'launch-selected': {
@@ -113,20 +129,23 @@ document.addEventListener('click', async (e) => {
       elAction.disabled = false;
       if (handlePreparedPlan(r)) break;
       if (r && r.ok) {
+        clearLaunchFailure();
         toast(`Launched ${r.launched} client${r.launched === 1 ? '' : 's'}` + (target.gameId ? ' into the exact server' : '') + (r.failed ? `, ${r.failed} failed` : ''), r.failed ? 'bad' : 'good');
         const ka = $('#lp-keepalive');
         if (ka && ka.checked && target.placeId) {
           armWatchdog(ids.map(id => ({ accountId: id, placeId: target.placeId, gameInstanceId: target.gameId, name: 'the game' })));
           toast('Watchdog enabled — dropped clients rejoin automatically', 'good');
         }
-      } else toast((r && r.error) || 'Launch failed', 'bad');
+      } else presentLaunchFailure(r, () => target.gameId && target.placeId
+        ? call(() => api.launch.join(ids, target.placeId, target.gameId))
+        : call(() => api.launch.accounts(ids, target.placeId)));
       break;
     }
     case 'launch-account': {
       const r = await call(() => api.launch.accounts([id], ''));
       if (handlePreparedPlan(r)) break;
-      if (r && r.ok) toast('Launched ' + (r.launched) + ' client', 'good');
-      else toast((r && (r.error || (r.results && r.results[0] && r.results[0].reason))) || 'Launch failed', 'bad');
+      if (r && r.ok) { clearLaunchFailure(); toast('Launched ' + (r.launched) + ' client', 'good'); }
+      else presentLaunchFailure(r, () => call(() => api.launch.accounts([id], '')));
       break;
     }
     case 'follow-account': {
@@ -136,7 +155,7 @@ document.addEventListener('click', async (e) => {
     case 'toggle-follow-account': {
       if (state.following || id === state.followTargetId) break;
       if (state.followSelected.has(id)) state.followSelected.delete(id);
-      else if (state.followSelected.size >= 3) { toast('Launch plans support up to 3 accounts', 'bad'); break; }
+      else if (state.followSelected.size >= (legacyCompatibilityMode() ? 3 : 1)) { toast('Normal mode launches one account. Enable Multi-instance mode for up to three.', 'bad'); break; }
       else state.followSelected.add(id);
       renderFollowDialog();
       break;
@@ -155,6 +174,7 @@ document.addEventListener('click', async (e) => {
         break;
       }
       if (r && r.ok) {
+        clearLaunchFailure();
         const targetName = r.targetDisplayName || r.targetUsername || 'account';
         closeFollowDialog();
         toast(`Joined ${targetName} with ${r.launched} account${r.launched === 1 ? '' : 's'}` + (r.failed ? `, ${r.failed} failed` : ''), r.failed ? 'bad' : 'good');
@@ -447,7 +467,9 @@ document.addEventListener('click', async (e) => {
           setTimeout(() => { call(() => api.instances.arrange()); }, 20000);
         }
         if (session.keepAlive && session.placeId) armWatchdog(ids.map(id => ({ accountId: id, placeId: session.placeId, gameInstanceId: session.gameId, name: session.name })));
-      } else toast((r && r.error) || 'Session launch failed', 'bad');
+      } else presentLaunchFailure(r, () => session.gameId && session.placeId
+        ? call(() => api.launch.join(ids, session.placeId, session.gameId))
+        : call(() => api.launch.accounts(ids, session.placeId || '')));
       break;
     }
     case 'session-delete': {
@@ -529,8 +551,9 @@ document.addEventListener('click', async (e) => {
       state.servers = null;
       if (handlePreparedPlan(r)) break;
       if (r && r.ok) {
+        clearLaunchFailure();
         toast(`Filled ${r.launched} account${r.launched === 1 ? '' : 's'} into ${r.servers} server${r.servers === 1 ? '' : 's'}` + (r.failed ? `, ${r.failed} failed` : ''), r.failed ? 'bad' : 'good');
-      } else toast((r && r.error) || 'Fill failed', 'bad');
+      } else presentLaunchFailure(r, null);
       break;
     }
 
@@ -574,7 +597,7 @@ document.addEventListener('click', async (e) => {
       if (!state.personJoin || state.personJoin.joining) break;
       const set = state.personJoin.selectedIds;
       if (set.has(id)) set.delete(id);
-      else if (set.size >= 3) { toast('Launch plans support up to 3 accounts', 'bad'); break; }
+      else if (set.size >= (legacyCompatibilityMode() ? 3 : 1)) { toast('Normal mode launches one account. Enable Multi-instance mode for up to three.', 'bad'); break; }
       else set.add(id);
       renderPersonJoinDialog();
       break;
@@ -592,13 +615,13 @@ document.addEventListener('click', async (e) => {
         break;
       }
       if (r && r.ok) {
+        clearLaunchFailure();
         closePersonJoinDialog();
         toast(`Joining ${join.name} with ${r.launched} account${r.launched === 1 ? '' : 's'}` + (r.failed ? `, ${r.failed} failed` : ''), r.failed ? 'bad' : 'good');
       } else {
         join.joining = false;
         renderPersonJoinDialog();
-        const firstFailure = r && r.results && r.results.find(result => !result.ok);
-        toast((r && r.error) || (firstFailure && firstFailure.reason) || 'Join failed', 'bad');
+        presentLaunchFailure(r, () => call(() => api.launch.joinPersonMulti(ids, join.userId)));
       }
       break;
     }
@@ -808,10 +831,7 @@ async function doRowAction(kind, capability) {
 
 async function copyDiagnostics() {
   const g = state.diag || {};
-  const lines = ['SUNDAY Launcher diagnostics', '----------------'];
-  Object.keys(g).forEach(k => { if (k !== 'candidates') lines.push(k + ': ' + g[k]); });
-  lines.push('', 'Recent log:');
-  state.logs.slice(-40).forEach(e => lines.push(`[${e.time}] ${e.level.toUpperCase()} ${e.message}${e.detail ? ' | ' + e.detail : ''}`));
-  try { await navigator.clipboard.writeText(lines.join('\n')); toast('Diagnostics copied', 'good'); }
+  const safe = g.sanitizedLaunchDiagnostics || { error: 'Sanitized launch diagnostics are unavailable.' };
+  try { await navigator.clipboard.writeText(JSON.stringify(safe, null, 2)); toast('Sanitized launch diagnostics copied', 'good'); }
   catch (_) { toast('Could not copy', 'bad'); }
 }

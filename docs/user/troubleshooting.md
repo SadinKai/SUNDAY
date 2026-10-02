@@ -1,13 +1,28 @@
 # Troubleshooting
 
-## The UI says waiting for isolated environment
+## A normal launch fails
 
-This is SUNDAY's safe default. In v1.8.15:
+Normal mode launches one SUNDAY-owned Roblox client without enabling
+Multi-instance mode. If it fails:
+
+1. Close any unrelated Roblox client; SUNDAY will not adopt it.
+2. Confirm **Roblox detected** on the Launch screen.
+3. Retry once.
+4. Open **Diagnostics** and select **Copy sanitized launch diagnostics**.
+
+The copied report contains mode, Roblox version, process-state booleans,
+failure stage, and a sanitized reason. It excludes cookies, authentication
+tickets, capability values, logs, and personal filesystem paths.
+
+## Enable multiple clients
+
+To launch more than one client:
 
 1. Open **Settings** and select **Multi-instance**.
 2. Turn on **Enable multi-instance mode** and save.
 3. Restart SUNDAY when prompted.
-4. Confirm **LEGACY MULTI-INSTANCE MODE** appears.
+4. Confirm **LEGACY MULTI-INSTANCE MODE** appears. Normal single-client launch
+   does not require this setting.
 
 The exact `LEGACY_COMPAT=1` environment override remains available for
 backward-compatible developer workflows. Values such as `true`, `yes`, and
@@ -51,7 +66,7 @@ issue, fixture, or configuration file.
 
 ## Windows SmartScreen shows a warning
 
-The v1.8.15 installer and portable application are intentionally
+The v1.8.16 installer and portable application are intentionally
 unsigned. Download only from the canonical
 [Releases page](https://github.com/SadinKai/SUNDAY/releases) and compare the
 file's SHA-256 hash with the published `SHA256SUMS.txt`. A matching checksum
@@ -59,7 +74,7 @@ confirms byte integrity; it is not a publisher signature.
 
 ## Automatic updates are unavailable
 
-Automatic update installation is not active in v1.8.15. Use **View releases**
+Automatic update installation is not active in v1.8.16. Use **View releases**
 to open the canonical Releases page and download updates manually. SUNDAY does
 not claim that an unavailable updater installed anything.
 
@@ -71,7 +86,7 @@ Studio C++ Build Tools, Windows SDK, and WebView2. Continue with
 
 ## Reporting diagnostics
 
-Include the SUNDAY version, Windows version, exact reproduction steps, selected
-adapter, isolation state, and sanitized error text. Remove user names, paths,
-account identifiers, cookies, tokens, databases, and screenshots containing
-private information. Read [Privacy](../../PRIVACY.md) before sharing files.
+Use **Copy sanitized launch diagnostics**, then include exact reproduction
+steps. Do not attach the raw AppData log, account database, cookie, token,
+authentication ticket, or a screenshot containing private information. Read
+[Privacy](../../PRIVACY.md) before sharing files.

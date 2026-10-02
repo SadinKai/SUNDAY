@@ -15,7 +15,7 @@ views.accounts = function () {
       <div><h1>Accounts</h1><p>Manage identities, session health, and who is ready for the next launch.</p></div>
       <div class="inline" data-account-launch-actions>
         ${list.length ? `<button class="btn sm" data-action="refresh-accounts" data-tip="Refresh all">${icon('refresh')} Refresh all</button>` : ''}
-        ${selectedCount ? `<button class="btn sm" data-action="launch-selected" data-account-launch-selected>${icon('play')} ${legacyCompatibilityMode() ? 'Launch' : 'Prepare'} ${selectedCount} selected</button>` : ''}
+        ${selectedCount ? `<button class="btn sm" data-action="launch-selected" data-account-launch-selected>${icon('play')} Launch ${selectedCount} selected</button>` : ''}
         <button class="btn primary sm" data-action="add-account" ${state.addingAccount ? 'disabled' : ''}>
           ${state.addingAccount ? '<span class="spinner"></span>' : icon('user-plus')} ${state.addingAccount ? 'Waiting for sign-in…' : 'Add account'}
         </button>
@@ -72,7 +72,7 @@ function renderAccountCard(a) {
       <div class="acct-actions">
         ${expired
           ? `<button class="btn primary sm" data-action="reauth-account" data-id="${id}">${icon('user-plus')} Sign in again</button>`
-          : `<button class="btn primary sm" data-action="launch-account" data-id="${id}">${icon('play')} ${legacyCompatibilityMode() ? 'Launch' : 'Prepare'}</button>`}
+          : `<button class="btn primary sm" data-action="launch-account" data-id="${id}">${icon('play')} Launch</button>`}
         <button class="btn sm" data-action="follow-account" data-id="${id}" data-tip="${esc(followTip)}" ${canFollow ? '' : 'disabled'}>${icon('users-group')} Follow</button>
         <button class="btn sm icon" data-action="refresh-account" data-id="${id}" data-tip="Refresh status">${icon('refresh')}</button>
         <button class="btn sm icon danger" data-action="remove-account" data-id="${id}" data-tip="Remove account">${icon('trash')}</button>

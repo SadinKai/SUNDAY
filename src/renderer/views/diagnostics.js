@@ -8,7 +8,7 @@ views.diagnostics = async function () {
   const g = state.diag;
   const kv = (k, v) => `<div class="k">${esc(k)}</div><div class="v">${esc(v == null ? '-' : v)}</div>`;
   mount(`
-    <div class="page-head page-head-actions"><div><h1>Diagnostics</h1><p>Runtime truth, environment details, and the live troubleshooting log.</p></div><div class="inline"><button class="btn sm" data-action="copy-diag">${icon('copy')} Copy diagnostics</button><button class="btn sm" data-action="open-userdata">${icon('folder')} Open data folder</button></div></div>
+    <div class="page-head page-head-actions"><div><h1>Diagnostics</h1><p>Runtime truth, environment details, and the live troubleshooting log.</p></div><div class="inline"><button class="btn sm" data-action="copy-diag">${icon('copy')} Copy sanitized launch diagnostics</button><button class="btn sm" data-action="open-userdata">${icon('folder')} Open data folder</button></div></div>
     <div class="diag-overview" aria-label="Runtime summary">
       <div><span>Launch mode</span><b>${esc(g.isolationState || 'Unavailable')}</b></div>
       <div><span>Adapter</span><b>${esc(g.selectedAdapter || 'Unavailable')}</b></div>
@@ -24,7 +24,7 @@ views.diagnostics = async function () {
       </div></section>
       <section class="diag-section diag-wide"><h2>Paths and data</h2><div class="kv">
         ${kv('Roblox', g.robloxFound ? (g.robloxVersion + ' via ' + g.robloxSource) : 'not found')}${kv('Roblox path', g.robloxPath)}${kv('Data folder', g.userData)}${kv('Log file', g.logFile)}
-      </div><details class="diag-technical"><summary>Technical plan state</summary><div class="a">A blocked plan is blocked; prepare again to evaluate the current legacy adapter.</div></details></section>
+      </div><details class="diag-technical"><summary>Technical launch state</summary><div class="a">Normal mode launches one owned client. Multi-instance mode uses the opt-in legacy compatibility adapter. Copied diagnostics omit paths, logs, credentials, tickets, and capability values.</div></details></section>
     </div>
     <div class="row-split diag-log-head">
       <div><h2>Live log</h2><p>Newest runtime events from this SUNDAY process.</p></div>
