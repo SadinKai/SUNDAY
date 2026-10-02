@@ -499,7 +499,8 @@ async function joinPlace(placeId, name) {
   const r = await call(() => api.launch.accounts(ids, String(placeId)));
   if (handlePreparedPlan(r)) return;
   if (r && r.ok) {
+    clearLaunchFailure();
     toast(`Launched ${r.launched} client${r.launched === 1 ? '' : 's'}`, r.failed ? 'bad' : 'good');
     recordRecentGame(gameByPlaceId(placeId));
-  } else toast((r && r.error) || 'Join failed', 'bad');
+  } else presentLaunchFailure(r, () => call(() => api.launch.accounts(ids, String(placeId))));
 }

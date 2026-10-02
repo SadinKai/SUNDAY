@@ -606,6 +606,10 @@ textarea { resize: vertical; min-height: 70px; }
   background: var(--success-bg); color: var(--success-text); }
 .now-playing.joinable { background: var(--accent-bg); color: var(--accent-text); border: 1px solid var(--accent-ring); }
 .now-playing.joinable .btn { margin-left: auto; flex: none; }
+
+.launch-failure { margin-bottom: 14px; border: 1px solid var(--danger-ring); border-radius: 8px; background: var(--danger-bg); color: var(--ink-2); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.launch-failure b { display: block; color: var(--ink-1); margin-bottom: 2px; }
+.launch-failure .inline { margin-left: auto; }
 .now-playing > svg { width: 15px; height: 15px; }
 .now-playing span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .now-playing strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

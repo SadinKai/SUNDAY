@@ -338,10 +338,10 @@ try {
     processPrimitiveScan = @($binaryPrimitiveScan, $sourcePrimitiveScan)
     networkOriginScan = $networkOriginScan
     limitations = @(
-      'Local artifacts are unsigned development evidence, not releasable production artifacts.',
-      'This audit does not install or execute the installer.',
+      'The Windows binaries are intentionally unsigned; this audit records integrity and signature status but does not establish publisher identity.',
+      'This audit does not install or execute the installer; real-Windows packaged-build qualification is recorded separately.',
       'PE primitive-name presence records linked Windows or Rust runtime symbols and does not by itself prove an authored reachable operation; authored JavaScript bindings are checked separately.',
-      'Publisher trust, timestamp-chain validation, published-digest verification, and disposable-VM qualification require signed release artifacts.'
+      'Published-digest verification requires downloading the final GitHub release assets and comparing their SHA-256 values.'
     )
   }
   $outputPath = Join-Path $dist 'artifact-audit.json'

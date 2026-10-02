@@ -137,7 +137,8 @@ test('synthetic partial allocation failure does not disturb independently owned 
     assert.deepEqual(response.plan.operations.map(operation => operation.state), ['RUNNING', 'FAILED', 'RUNNING']);
     assert.equal((await f.adapter.health()).running, 2);
     const failed = response.plan.operations[1];
-    assert.match(failed.reason, /allocation failure/);
+    assert.equal(failed.failureCode, 'LAUNCH_FAILED');
+    assert.match(failed.reason, /could not be launched/);
   } finally { await f.cleanup(); }
 });
 

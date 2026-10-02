@@ -150,8 +150,16 @@ test('actual backend startup reads the persisted multi-instance preference and d
     assert.equal(disabled.adapterSelection.legacyCompatEnabled, false);
     assert.equal(disabled.adapterSelection.legacyCompatSettingEnabled, false);
     assert.equal(disabled.adapterSelection.legacyCompatActivationSource, 'none');
-    assert.equal(disabled.adapterSelection.selectedAdapter, 'UnavailableRobloxIsolationAdapter');
-    await shutdownBackend(runtime, 6);
+    assert.equal(disabled.adapterSelection.selectedAdapter, 'SingleClientRobloxIsolationAdapter');
+    assert.equal(disabled.adapterSelection.isolationState, 'ACTIVATED');
+    const diagnostics = await request(runtime.child, runtime.messages, 6, 'diag_get');
+    const sanitized = diagnostics.diagnostics.sanitizedLaunchDiagnostics;
+    assert.equal(sanitized.adapter.selected, 'SingleClientRobloxIsolationAdapter');
+    assert.equal(sanitized.adapter.multiInstanceEnabled, false);
+    assert.equal(typeof sanitized.roblox.detected, 'boolean');
+    const serialized = JSON.stringify(sanitized);
+    assert.doesNotMatch(serialized, /runtime-setting-|sunday-state\.sqlite3|capability\":\"|roblox-player:|gameinfo:/i);
+    await shutdownBackend(runtime, 7);
   } finally {
     if (runtime && runtime.child.exitCode == null) runtime.child.kill();
     if (runtime) try { runtime.lines.close(); } catch (_) {}

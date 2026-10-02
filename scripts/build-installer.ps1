@@ -149,4 +149,4 @@ Remove-Item $staging -Recurse -Force
 
 Write-Host ""
 Write-Host "Installer: $installerExe ($((Get-Item $installerExe).Length / 1MB) MB, SUNDAY Launcher $version)"
-Write-Host "Payload:   portable distribution + signed ledger-bound uninstaller"
+Write-Host "Payload:   portable distribution + ledger-bound uninstaller"

@@ -125,7 +125,18 @@ async function main() {
 
     const facts = await evaluate(`(async () => {
       localStorage.removeItem('sunday-sessions');
-      state.status = { robloxFound: true, version: 'test', source: 'test', ffiAvailable: true };
+      state.status = {
+        robloxFound: true,
+        version: 'test',
+        source: 'test',
+        ffiAvailable: true,
+        capabilities: { robloxIsolation: { state: 'ACTIVE' } },
+        adapterSelection: {
+          legacyCompatEnabled: false,
+          selectedAdapter: 'SingleClientRobloxIsolationAdapter',
+          isolationState: 'ACTIVATED',
+        },
+      };
       state.accounts = [
         { id: 'acct-1', username: 'Tester', displayName: 'Test Account', presence: 'Offline' },
         { id: 'acct-2', username: 'Unselected', displayName: 'Unselected Account', presence: 'Offline' },
@@ -259,15 +270,15 @@ async function main() {
 
       state.updater = { state: 'unavailable' };
       state.status = {
-        appVersion: '1.8.15',
+        appVersion: '1.8.16',
         capabilities: { updaterApply: { state: 'UNAVAILABLE' } },
         adapterSelection: {
           legacyCompatEnabled: false,
           legacyCompatEnvironmentEnabled: false,
           legacyCompatSettingEnabled: false,
           legacyCompatActivationSource: 'none',
-          selectedAdapter: 'UnavailableRobloxIsolationAdapter',
-          isolationState: 'UNAVAILABLE',
+          selectedAdapter: 'SingleClientRobloxIsolationAdapter',
+          isolationState: 'ACTIVATED',
         },
       };
       state.settings.multiInstanceMode = false;
@@ -433,8 +444,8 @@ async function main() {
       || !/Disabled for this SUNDAY session/.test(facts.settingsStructure.multiInstanceStatus)) {
       throw new Error('Deep-redesign structure regression: ' + JSON.stringify(facts));
     }
-    if (!/Prepare plan/.test(facts.launchTruth.planningLabel)
-      || facts.launchTruth.planningReadiness !== 'Ready to prepare'
+    if (!/Launch/.test(facts.launchTruth.planningLabel)
+      || facts.launchTruth.planningReadiness !== 'Ready to launch'
       || !facts.launchTruth.planningEnabled
       || !facts.launchTruth.invalidDisabled
       || facts.launchTruth.invalidReadiness !== 'Check destination'

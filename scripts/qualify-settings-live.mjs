@@ -250,6 +250,7 @@ let child = null;
 const baseline = await robloxSnapshot();
 
 try {
+  assert(baseline.length === 0, 'A Roblox client was already running; qualification will not adopt or terminate it.');
   child = startPackaged(undefined);
   connection = await connectPackaged();
 
@@ -259,15 +260,15 @@ try {
     initial = await selection(connection);
   }
   assert(initial.appVersion === expectedVersion, `Expected packaged ${expectedVersion}, received ${initial.appVersion}.`);
-  assert(!initial.enabled && initial.environmentValue === 'ABSENT' && initial.activationSource === 'none', 'Default startup did not remain fail closed.');
-  assert(initial.adapter === 'UnavailableRobloxIsolationAdapter' && initial.isolationState === 'UNAVAILABLE', 'Default adapter was not unavailable.');
+  assert(!initial.enabled && initial.environmentValue === 'ABSENT' && initial.activationSource === 'none', 'Default startup enabled multi-instance unexpectedly.');
+  assert(initial.adapter === 'SingleClientRobloxIsolationAdapter' && initial.isolationState === 'ACTIVATED', 'Default adapter was not normal single-client mode.');
   await wait(1500);
   const afterDefaultProcesses = await robloxSnapshot();
   const defaultNewProcesses = afterDefaultProcesses.filter(row => !baseline.some(before => identity(before) === identity(row)));
   assert(defaultNewProcesses.length === 0, 'Default packaged startup spawned Roblox unexpectedly.');
   const accounts = await connection.evaluate('window.sunday.accounts.list()');
   const usableAccounts = (accounts.accounts || []).filter(account => account.sessionExpired !== true).slice(0, 3);
-  assert(usableAccounts.length >= 2, `At least two non-expired saved accounts are required; found ${usableAccounts.length}.`);
+  assert(usableAccounts.length === 3, `Three non-expired saved accounts are required; found ${usableAccounts.length}.`);
   report.default = {
     ...initial,
     accountCount: (accounts.accounts || []).length,
@@ -315,7 +316,7 @@ try {
   await waitOwned(connection, 0, 60000);
   await waitNoCloneSlots();
 
-  const selectedAccountIds = accountIds.slice(0, Math.min(3, accountIds.length));
+  const selectedAccountIds = accountIds.slice(0, 3);
   const multiple = await launchAccounts(connection, selectedAccountIds);
   const multiObserved = await waitOwned(connection, selectedAccountIds.length);
   await wait(stableWaitMs);
@@ -381,13 +382,12 @@ try {
   connection = await restartFromSettings(connection, false);
   const disabled = await selection(connection);
   assert(!disabled.enabled && !disabled.settingEnabled && disabled.activationSource === 'none', 'Settings disablement did not persist.');
-  assert(disabled.adapter === 'UnavailableRobloxIsolationAdapter' && disabled.isolationState === 'UNAVAILABLE', 'Disable restart did not return to the unavailable adapter.');
-  const disabledLaunch = await connection.evaluate(`window.sunday.launch.accounts(${JSON.stringify(accountIds.slice(0, 1))}, '')`);
-  assert(disabledLaunch && disabledLaunch.prepared === true && disabledLaunch.ok === false, 'Unavailable mode did not remain planning-only.');
-  await wait(1500);
-  const disabledProcesses = await robloxSnapshot();
-  assert(disabledProcesses.every(row => baseline.some(before => identity(before) === identity(row))), 'Disabled mode spawned an unexpected Roblox process.');
-  report.disable = { ...disabled, planningOnly: true, automaticRobloxSpawns: 0 };
+  assert(disabled.adapter === 'SingleClientRobloxIsolationAdapter' && disabled.isolationState === 'ACTIVATED', 'Disable restart did not return to normal single-client mode.');
+  const disabledLaunch = await launchAccounts(connection, accountIds.slice(0, 1));
+  const disabledOwned = await waitOwned(connection, 1);
+  await stopExact(connection, disabledOwned.rows[0].capability);
+  await waitOwned(connection, 0, 60000);
+  report.disable = { ...disabled, normalSingleClientLaunch: true, automaticRobloxSpawns: 1 };
   await closePackaged(connection);
   connection = null;
 
@@ -405,7 +405,7 @@ try {
     connection = await connectPackaged();
     const invalid = await selection(connection);
     assert(!invalid.enabled && !invalid.environmentEnabled && invalid.environmentValue === value, `LEGACY_COMPAT=${value} enabled unexpectedly.`);
-    assert(invalid.adapter === 'UnavailableRobloxIsolationAdapter', `LEGACY_COMPAT=${value} did not fail closed.`);
+    assert(invalid.adapter === 'SingleClientRobloxIsolationAdapter', `LEGACY_COMPAT=${value} did not retain normal single-client mode.`);
     report.backwardCompatibility[value] = { enabled: false, activationSource: invalid.activationSource, adapter: invalid.adapter };
     await closePackaged(connection);
     connection = null;

@@ -155,6 +155,16 @@ function windowsShellEvidence(target) {
   catch (_) { return { status: completed.status, stdout, stderr: String(completed.stderr || '').trim(), error: completed.error && completed.error.message }; }
 }
 
+function sanitizedLegacyFailure(message, stage) {
+  const value = String(message || '').toLowerCase();
+  if (value.includes('startup error dialog')) return { code: 'ROBLOX_STARTUP_ERROR', stage, reason: 'Roblox opened a startup error dialog.' };
+  if (value.includes('timeout') || value.includes('stable running window')) return { code: 'STARTUP_TIMEOUT', stage, reason: 'Roblox startup timed out before a stable running state was verified.' };
+  if (value.includes('not found')) return { code: 'ROBLOX_NOT_FOUND', stage, reason: 'RobloxPlayerBeta.exe was not found. Locate it in Settings.' };
+  if (value.includes('clone') || value.includes('slot') || value.includes('content')) return { code: 'SLOT_PREPARATION_FAILED', stage, reason: 'Multi-instance compatibility could not prepare a safe client slot.' };
+  if (value.includes('identity') || value.includes('ownership')) return { code: 'OWNERSHIP_NOT_VERIFIED', stage, reason: 'SUNDAY could not verify ownership of the launched Roblox process.' };
+  return { code: 'LAUNCH_FAILED', stage, reason: 'Roblox could not be launched in Multi-instance mode.' };
+}
+
 class LegacyCloneManager {
   constructor(options) {
     const opts = options || {};
@@ -697,6 +707,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     this.lastContestedSweep = 0;
     this.closedHandles = 0;
     this.crossProcessActions = [];
+    this.lastFailure = null;
     this._forensic('adapter_started', {
       pid: process.pid,
       cwd: process.cwd(),
@@ -939,7 +950,10 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         qualified: false,
       });
     } catch (error) {
-      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, { ok: false, mode: 'LEGACY_COMPAT' });
+      this.lastFailure = Object.freeze(Object.assign({ at: new Date().toISOString() }, sanitizedLegacyFailure(error.message, 'allocation')));
+      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, {
+        ok: false, mode: 'LEGACY_COMPAT', failureCode: this.lastFailure.code, failureStage: this.lastFailure.stage,
+      });
     }
   }
 
@@ -1023,7 +1037,11 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     this._forensic('launch_spawn_request', {
       trace: environment.trace,
       cwd: process.cwd(),
-      args,
+      launchArguments: {
+        count: args.length,
+        mode: intent.mode === 'client' ? 'client' : 'deeplink',
+        hasLaunchUri: args.length === 1,
+      },
       logicalExecutable: pathEvidence(logicalExecutable),
       canonicalExecutable,
       cloneDirectory: pathEvidence(path.dirname(logicalExecutable)),
@@ -1081,6 +1099,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     environment.processIdentity = String(row.processIdentity || this.native.processIdentityOf(row.pid) || '');
     environment.capability = capability;
     environment.state = 'RUNNING';
+    this.lastFailure = null;
     environment.startedAt = new Date().toISOString();
     this._forensic('launch_marked_running', {
       trace: environment.trace,
@@ -1129,6 +1148,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     try { return await this._launchInEnvironment(rawIntent, environment, context); }
     catch (error) {
       environment.state = 'FAILED';
+      this.lastFailure = Object.freeze(Object.assign({ at: new Date().toISOString() }, sanitizedLegacyFailure(error.message, 'launch')));
       let cleanup = null;
       if (environment.spawnPid && environment.spawnFingerprint
           && environment.spawnFingerprint.processIdentity
@@ -1141,7 +1161,9 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         message: error.message,
         cleanup,
       });
-      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, { ok: false, status: 'FAILED' });
+      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, {
+        ok: false, status: 'FAILED', failureCode: this.lastFailure.code, failureStage: this.lastFailure.stage,
+      });
     }
   }
 
@@ -1289,6 +1311,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     return {
       mode: 'LEGACY_COMPAT',
       qualified: false,
+      lastFailure: this.lastFailure,
       singletonNamesOwned: !!this.legacyNative.singletonNamesOwned(),
       closedGlobalSingletonHandles: this.closedHandles,
       externalAtStartup: Array.from(this.externalAtStartup.values()),

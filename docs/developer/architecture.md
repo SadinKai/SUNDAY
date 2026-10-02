@@ -23,7 +23,7 @@ flowchart TB
 
     subgraph Isolation[Roblox execution boundary]
       Selector[Adapter selector]
-      Unavailable[Unavailable adapter]
+      Single[SingleClientRobloxIsolationAdapter]
       Legacy[LegacyRobloxIsolationAdapter]
       Slots[Clone validation and slot leases]
     end
@@ -35,7 +35,7 @@ flowchart TB
     RPC --> Capabilities
     RPC --> Network
     Coordinator --> Selector
-    Selector -->|default| Unavailable
+    Selector -->|default| Single
     Selector -->|saved opt-in or LEGACY_COMPAT=1| Legacy
     Legacy --> Slots
 ```
@@ -93,14 +93,19 @@ and an externally observed client is never adopted automatically.
 After persistent settings are loaded, `roblox-isolation-adapter.js` selects the
 adapter before `LaunchCoordinator` is constructed:
 
-- Default: `UnavailableRobloxIsolationAdapter` preserves plans but refuses
-  execution.
+- Default: `SingleClientRobloxIsolationAdapter` launches at most one client and
+  accepts only the spawned PID or its direct child after executable file,
+  creation identity, path, and responsive-window qualification.
 - Saved `multiInstanceMode: true` or exact `LEGACY_COMPAT=1`:
   `LegacyRobloxIsolationAdapter` enables the same bounded compatibility path.
 
 The selected adapter is immutable for the process lifetime, so changing the
 saved preference requires a controlled application restart. Diagnostics records
 whether the saved setting or environment override selected it.
+
+The default adapter refuses to adopt an existing Roblox process and exposes no
+broad termination operation. Its focus, stop, and restart actions resolve the
+same opaque capability used by the legacy adapter.
 
 The legacy adapter retains the established singleton handling, clone builder,
 tree validation, three-slot allocator, `RELEASED_BUT_BUSY` behavior, ownership
@@ -117,7 +122,7 @@ general-purpose remote navigation channel.
 ## Update and release trust
 
 The release-trust code can validate signed canonical manifests with monotonic
-sequence, publisher, key identifier, and artifact digests. The v1.8.15
+sequence, publisher, key identifier, and artifact digests. The v1.8.16
 assets are intentionally unsigned and are distributed with SHA-256 checksums.
 The update coordinator cannot apply downloaded code merely because a public key
 exists. In-application update application remains unavailable until

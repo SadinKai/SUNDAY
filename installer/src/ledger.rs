@@ -137,7 +137,10 @@ pub fn hash_file(file: &Path) -> Result<String, String> {
     let mut input = fs::File::open(file)
         .map_err(|error| format!("could not open owned file {}: {error}", file.display()))?;
     let mut digest = Sha256::new();
-    let mut buffer = [0u8; 1024 * 1024];
+    // Keep the bounded hashing buffer off the process main thread's relatively
+    // small Windows stack. The removal helper performs this same verification
+    // before it deletes anything and must not overflow while hashing a file.
+    let mut buffer = vec![0u8; 1024 * 1024];
     loop {
         let count = input
             .read(&mut buffer)
@@ -697,6 +700,30 @@ mod tests {
         assert!(root.join("node.exe").exists());
         assert!(hash_file(&root.join("node.exe")).is_ok());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hashing_is_safe_on_the_removal_helpers_small_main_stack() {
+        let file = std::env::temp_dir().join(format!(
+            "sunday-small-stack-hash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&file, b"ledger-bound removal helper evidence").unwrap();
+        let worker_file = file.clone();
+        let digest = std::thread::Builder::new()
+            .name("sunday-small-stack-hash".into())
+            .stack_size(256 * 1024)
+            .spawn(move || hash_file(&worker_file))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(digest.len(), 64);
+        fs::remove_file(file).unwrap();
     }
 
     #[test]

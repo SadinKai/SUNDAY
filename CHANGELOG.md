@@ -2,6 +2,46 @@
 
 All notable changes to SUNDAY Launcher are documented in this file.
 
+## 1.8.16
+
+### Changed
+
+- Added a normal, capability-bound single-client Roblox adapter as the default
+  launch path; Multi-instance mode and `LEGACY_COMPAT=1` remain optional legacy
+  compatibility paths.
+- Added actionable launch failure codes and UI actions without exposing launch
+  tickets, cookies, capabilities, or personal filesystem paths.
+- Made window selection deterministic when Roblox exposes more than one visible
+  window, while retaining process identity and responsive `WINDOWSCLIENT`
+  requirements.
+- Added guarded packaged qualification for Account-page launch, public-game
+  launch, Active Clients, focus, restart, exact stop, and the existing
+  three-client legacy regression path.
+- Kept the existing `LegacyRobloxIsolationAdapter` clone, native singleton,
+  slot-ownership, capability, and cleanup implementation as the production
+  multi-instance path; provider research is not a v1.8.16 release gate.
+- Made the intentionally unsigned installer usable in an explicit
+  integrity-only mode while retaining closed-world payload hashes, canonical
+  install paths, ledger-bound ownership, and hash-matched uninstall helpers;
+  signed builds retain their Authenticode checks.
+- Fixed Start Menu and desktop shortcut creation when canonical Windows paths
+  use the verbatim `\\?\` prefix.
+- Kept the uninstaller's SHA-256 buffer off the Windows process stack so the
+  verified removal helper can complete without a stack-overflow crash.
+
+### Release boundaries
+
+- Multi-instance remains an opt-in legacy compatibility mode whose behavior can
+  change with Roblox and the Windows environment; it is not vendor-supported
+  isolation.
+- Automatic update installation remains unavailable. The v1.8.16 installer and
+  portable archive are intentionally unsigned, so users should verify the
+  published SHA-256 checksums.
+- SUNDAY is independent and is not affiliated with or endorsed by Roblox
+  Corporation. This release addresses the identified single-client
+  qualification failure modes and was live-qualified on the release
+  environment; it does not claim a retest on another machine.
+
 ## 1.8.15
 
 ### Added

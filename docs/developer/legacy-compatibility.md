@@ -2,12 +2,14 @@
 
 SUNDAY provides two explicit adapter states.
 
-## Safe default
+## Normal single-client mode
 
 Without either the saved multi-instance preference or exact
 `LEGACY_COMPAT=1` override, startup selects
-`UnavailableRobloxIsolationAdapter`. Account selection and launch planning
-remain available, but no Roblox ticket is resolved and no client is spawned.
+`SingleClientRobloxIsolationAdapter`. It launches at most one client, refuses to
+adopt an existing Roblox process, and requires exact executable file identity,
+process creation identity, path continuity, and a responsive Roblox client
+window before issuing an ownership capability.
 
 ## Legacy compatibility mode
 

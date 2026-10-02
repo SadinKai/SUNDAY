@@ -29,8 +29,8 @@ npm run start
 ```
 
 The Tauri shell stages its Node runtime into an ignored resource path during the
-build. The default adapter remains unavailable for Roblox execution. Current
-source builds expose the opt-in multi-instance preference in Settings; changing
+build. The default adapter supports one ownership-verified Roblox client.
+Current source builds expose the opt-in multi-instance preference in Settings; changing
 it requires a controlled application restart. The exact `LEGACY_COMPAT=1`
 environment value remains a backward-compatible override.
 
@@ -84,14 +84,11 @@ SQLite files, account exports, logs, clone trees, or screenshots.
 
 ## Safe local testing
 
-The default automated suite does not launch Roblox. Native UI drivers require
-the explicit `SUNDAY_ISOLATED_VM=1` guard and an isolated, dedicated user-data
-directory. Run them only on a controlled Windows environment where application
-state can be discarded.
-
-Live legacy drivers are a separate, explicit qualification tier. They require
-the legacy adapter, authorized test accounts, and a controlled environment with
-no valuable Roblox session or process state. They can launch Roblox and are
-never part of a normal build or CI run.
+The default automated suite does not launch Roblox. Live packaged drivers are a
+separate, explicit qualification tier. The normal driver requires one
+authorized test account. The legacy driver requires three, the existing legacy
+adapter, and multi-instance Settings activation. Both require a controlled real
+Windows environment with no pre-existing Roblox process. They can launch Roblox
+and are never part of a normal build or CI run.
 
 See [Testing](testing.md) for the complete boundary.

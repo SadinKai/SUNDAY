@@ -111,7 +111,7 @@ async function keywordSearch(query, cursor) {
         Accept: 'application/json',
         Origin: 'https://www.roblox.com',
         Referer: 'https://www.roblox.com/',
-        'User-Agent': 'SUNDAY-Launcher/1.8.15',
+        'User-Agent': 'SUNDAY-Launcher/1.8.16',
       },
     };
 

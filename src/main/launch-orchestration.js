@@ -19,6 +19,48 @@ const PLAN_STATES = Object.freeze({
 const OP_FINAL = new Set(['RUNNING', 'BLOCKED', 'UNAVAILABLE', 'FAILED', 'CANCELLED', 'STOPPED', 'UNKNOWN']);
 const SENSITIVE_KEY = /(cookie|ticket|credential|password|secret|deeplink|auth)/i;
 
+function classifyLaunchFailure(input) {
+  const raw = String(input || '');
+  const value = raw.toLowerCase();
+  if (/robloxplayerbeta\.exe was not found|roblox player was not found|roblox not found/.test(value)) {
+    return { code: 'ROBLOX_NOT_FOUND', reason: 'RobloxPlayerBeta.exe was not found. Locate it in Settings.', actions: ['OPEN_SETTINGS', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/normal mode launches one client|multi-instance mode/.test(value) && /enable/.test(value)) {
+    return { code: 'MULTI_INSTANCE_DISABLED', reason: 'Normal mode launches one client. Enable Multi-instance mode in Settings to launch multiple accounts.', actions: ['OPEN_SETTINGS'] };
+  }
+  if (/already running|will not adopt/.test(value)) {
+    return { code: 'CLIENT_ALREADY_RUNNING', reason: 'A Roblox client is already running. SUNDAY will not adopt or replace it.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/startup error dialog/.test(value)) {
+    return { code: 'ROBLOX_STARTUP_ERROR', reason: 'Roblox opened a startup error dialog.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/exited during startup|exited before reaching/.test(value)) {
+    return { code: 'PROCESS_EXITED', reason: 'Roblox exited during startup.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/ownership|identity|could not be proven/.test(value)) {
+    return { code: 'OWNERSHIP_NOT_VERIFIED', reason: 'SUNDAY could not verify ownership of the launched Roblox process.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/changed.*roblox|roblox installation changed|executable changed/.test(value)) {
+    return { code: 'EXECUTABLE_CHANGED', reason: 'Your Roblox installation changed. Re-detect Roblox in Settings.', actions: ['OPEN_SETTINGS', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/timed out|timeout|did not become ready|did not reach a stable running window/.test(value)) {
+    return { code: 'STARTUP_TIMEOUT', reason: 'Roblox startup timed out before a stable running state was verified.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/fresh roblox authentication|fresh roblox sign-in|launch intent could not be resolved|session expired/.test(value)) {
+    return { code: 'AUTHENTICATION_FAILED', reason: 'SUNDAY could not create a fresh Roblox sign-in for this account. Sign in again and retry.', actions: ['OPEN_ACCOUNTS', 'RETRY'] };
+  }
+  if (/slot|clone|legacy environment/.test(value)) {
+    return { code: 'SLOT_PREPARATION_FAILED', reason: 'Multi-instance compatibility could not prepare a safe client slot.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/windows could not start roblox|process creation did not return a pid|spawn/.test(value)) {
+    return { code: 'SPAWN_FAILED', reason: 'Windows could not start Roblox.', actions: ['RETRY', 'OPEN_SETTINGS', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/cancel/.test(value)) {
+    return { code: 'CANCELLED', reason: 'Launch was cancelled.', actions: [] };
+  }
+  return { code: 'LAUNCH_FAILED', reason: 'Roblox could not be launched. Retry, then view Diagnostics if it continues.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+}
+
 function copy(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 function nowIso(now) { return new Date(now()).toISOString(); }
 function id(prefix) { return `${prefix}-${crypto.randomUUID()}`; }
@@ -89,6 +131,7 @@ class LaunchPlanner {
       name: String(input && input.name || 'Launch plan').slice(0, 80),
       state: PLAN_STATES.PREPARED,
       reason: '',
+      failureCode: '',
       createdAt,
       updatedAt: createdAt,
       launchDelayMs: Math.max(0, Math.min(20000, Number(input && input.launchDelayMs) || 0)),
@@ -101,6 +144,8 @@ class LaunchPlanner {
         target: sanitizeTarget(targetsByAccount[participant.accountId] || defaultTarget),
         state: 'PREPARED',
         reason: '',
+        failureCode: '',
+        failureStage: '',
         environmentId: null,
         instanceId: null,
         capability: null,
@@ -219,13 +264,16 @@ class LaunchCoordinator extends EventEmitter {
       const preflight = await this.adapter.preflight({ plan: copy(plan), signal: controller.signal });
       if (!isActivated(preflight)) {
         const state = preflight && preflight.state === ISOLATION_STATES.QUALIFIED ? 'BLOCKED' : 'UNAVAILABLE';
-        const reason = String(preflight && preflight.reason || 'The isolation environment is unavailable.');
+        const failure = classifyLaunchFailure(preflight && preflight.reason || 'The isolation environment is unavailable.');
         plan = this._update(plan.planId, current => {
           current.state = PLAN_STATES.BLOCKED;
-          current.reason = reason;
+          current.reason = failure.reason;
+          current.failureCode = String(preflight && preflight.failureCode || failure.code);
           for (const operation of current.operations) {
             operation.state = state;
-            operation.reason = reason;
+            operation.reason = failure.reason;
+            operation.failureCode = current.failureCode;
+            operation.failureStage = String(preflight && preflight.failureStage || 'preflight');
             operation.updatedAt = nowIso(this.now);
           }
           return current;
@@ -269,7 +317,9 @@ class LaunchCoordinator extends EventEmitter {
           current.state = running === current.operations.length
             ? PLAN_STATES.COMPLETED
             : (running ? PLAN_STATES.PARTIAL : PLAN_STATES.FAILED);
-          current.reason = running === current.operations.length ? '' : 'One or more launch operations did not reach stable running.';
+          const firstFailure = current.operations.find(operation => operation.state !== 'RUNNING');
+          current.reason = running === current.operations.length ? '' : (firstFailure && firstFailure.reason || 'Roblox could not be launched.');
+          current.failureCode = running === current.operations.length ? '' : (firstFailure && firstFailure.failureCode || 'LAUNCH_FAILED');
           return current;
         });
       }
@@ -301,7 +351,10 @@ class LaunchCoordinator extends EventEmitter {
         'Isolation allocation timed out.',
       );
       if (!isActivated(allocated) || !allocated.environmentId) {
-        return this._failOperation(planId, operationId, allocated && allocated.reason || 'Isolation allocation failed.');
+        return this._failOperation(planId, operationId, allocated && allocated.reason || 'Isolation allocation failed.', null, {
+          failureCode: allocated && allocated.failureCode,
+          failureStage: allocated && allocated.failureStage || 'allocation',
+        });
       }
       runtime.environments.set(operationId, allocated.environmentId);
       plan = this._update(planId, current => {
@@ -323,7 +376,9 @@ class LaunchCoordinator extends EventEmitter {
         'Launch intent resolution timed out.',
       );
       if (!resolved || resolved.ok !== true || !resolved.intent) {
-        return this._failAndRelease(planId, operationId, runtime, resolved && resolved.reason || 'Launch intent could not be resolved.');
+        return this._failAndRelease(planId, operationId, runtime, resolved && resolved.reason || 'Launch intent could not be resolved.', null, {
+          failureCode: 'AUTHENTICATION_FAILED', failureStage: 'intent',
+        });
       }
 
       this._update(planId, current => {
@@ -340,7 +395,10 @@ class LaunchCoordinator extends EventEmitter {
         'Launch timed out before stable running.',
       );
       if (!isActivated(launched) || !launched.capability) {
-        return this._failAndRelease(planId, operationId, runtime, launched && launched.reason || 'Launch did not reach stable running.');
+        return this._failAndRelease(planId, operationId, runtime, launched && launched.reason || 'Launch did not reach stable running.', null, {
+          failureCode: launched && launched.failureCode,
+          failureStage: launched && launched.failureStage || 'launch',
+        });
       }
       runtime.capabilities.set(operationId, launched.capability);
       return this._update(planId, current => {
@@ -354,11 +412,14 @@ class LaunchCoordinator extends EventEmitter {
       });
     } catch (error) {
       if (runtime.controller.signal.aborted) return this._failAndRelease(planId, operationId, runtime, 'Launch operation was cancelled.', 'CANCELLED');
-      return this._failAndRelease(planId, operationId, runtime, error.message);
+      return this._failAndRelease(planId, operationId, runtime, error.message, null, {
+        failureCode: error && error.code,
+        failureStage: 'launch',
+      });
     }
   }
 
-  async _failAndRelease(planId, operationId, runtime, reason, state) {
+  async _failAndRelease(planId, operationId, runtime, reason, state, metadata) {
     const environmentId = runtime.environments.get(operationId);
     if (environmentId && !runtime.capabilities.has(operationId)) {
       try {
@@ -370,23 +431,26 @@ class LaunchCoordinator extends EventEmitter {
             planId,
             operationId,
             `${reason} Environment release was not confirmed: ${released && released.reason || 'unknown release result'}`,
-            'UNKNOWN',
+            'UNKNOWN', metadata,
           );
         }
       } catch (error) {
         if (state !== 'CANCELLED') {
-          return this._failOperation(planId, operationId, `${reason} Environment release was not confirmed: ${error.message}`, 'UNKNOWN');
+          return this._failOperation(planId, operationId, `${reason} Environment release was not confirmed: ${error.message}`, 'UNKNOWN', metadata);
         }
       }
     }
-    return this._failOperation(planId, operationId, reason, state);
+    return this._failOperation(planId, operationId, reason, state, metadata);
   }
 
-  _failOperation(planId, operationId, reason, state) {
+  _failOperation(planId, operationId, reason, state, metadata) {
+    const failure = classifyLaunchFailure(reason);
     return this._update(planId, current => {
       const operation = current.operations.find(item => item.operationId === operationId);
       operation.state = state || 'FAILED';
-      operation.reason = String(reason || 'Launch operation failed.');
+      operation.reason = failure.reason;
+      operation.failureCode = String(metadata && metadata.failureCode || failure.code);
+      operation.failureStage = String(metadata && metadata.failureStage || 'launch');
       operation.updatedAt = nowIso(this.now);
       return current;
     });
@@ -499,6 +563,7 @@ class LaunchCoordinator extends EventEmitter {
     const launched = plan.operations.filter(operation => operation.state === 'RUNNING').length;
     const failed = plan.operations.length - launched;
     const prepared = plan.state === PLAN_STATES.BLOCKED || plan.state === PLAN_STATES.PREPARED;
+    const failure = plan.reason ? classifyLaunchFailure(plan.reason) : null;
     return {
       ok: plan.state === PLAN_STATES.COMPLETED,
       prepared,
@@ -509,12 +574,16 @@ class LaunchCoordinator extends EventEmitter {
       launched,
       failed,
       error: plan.reason || '',
+      failureCode: plan.failureCode || (failure && failure.code) || '',
+      actions: failure ? failure.actions.slice() : [],
       results: plan.operations.map(operation => ({
         ok: operation.state === 'RUNNING',
         operationId: operation.operationId,
         accountId: operation.accountId,
         state: operation.state,
         reason: operation.reason,
+        failureCode: operation.failureCode || '',
+        failureStage: operation.failureStage || '',
         pid: operation.pid,
         instanceId: operation.instanceId || null,
       })),
@@ -528,5 +597,6 @@ module.exports = {
   LaunchPlanStore,
   PLAN_NAMESPACE,
   PLAN_STATES,
+  classifyLaunchFailure,
   sanitizeTarget,
 };

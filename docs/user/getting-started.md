@@ -15,12 +15,12 @@ managed clients from one dashboard.
 2. Download `SundayInstaller.exe` from the latest release.
 3. Run the installer and open **SUNDAY**.
 
-The v1.8.15 Windows binaries are unsigned. Windows SmartScreen may show
+The v1.8.16 Windows binaries are unsigned. Windows SmartScreen may show
 a warning because the files do not carry an Authenticode publisher signature.
 Verify that the download came from the canonical Releases page and compare its
 SHA-256 hash with `SHA256SUMS.txt` on that release.
 
-You can instead download `SundayPortable_1.8.15_x64.zip`, extract it into a new
+You can instead download `SundayPortable_1.8.16_x64.zip`, extract it into a new
 folder, and run `Sunday.exe`.
 
 ## Add an account
@@ -37,16 +37,17 @@ Windows user. It does not show the raw cookie in the normal interface. Read
 ## Launch
 
 1. Open **Launch**.
-2. Select the account or accounts you want to use.
+2. Select the account you want to use.
 3. Choose a destination.
 4. Review the plan and select **Launch**.
 5. Manage clients SUNDAY launched in **Active clients**.
 
-Roblox execution is disabled by default. To launch multiple clients, enable the
-explicit compatibility mode described in
-[Multi-instance mode](multi-instance.md).
+Normal single-client launch is enabled by default. To launch multiple clients,
+enable the explicit compatibility mode described in
+[Multi-instance mode](multi-instance.md). Normal use does not require an
+environment variable or developer configuration.
 
-The Settings control is the normal v1.8.15 workflow. The exact
+The Settings control is the normal multi-instance workflow. The exact
 `LEGACY_COMPAT=1` startup override remains available for backward-compatible
 developer use; it is not required for ordinary Settings-based activation.
 

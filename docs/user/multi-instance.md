@@ -4,6 +4,9 @@ Multi-instance mode lets SUNDAY launch up to three managed Roblox clients by
 using its existing legacy compatibility adapter. It is disabled by default and
 is not an official Roblox feature.
 
+Ordinary one-account launch uses SUNDAY's normal single-client adapter and does
+not require Multi-instance mode.
+
 ## Enable it
 
 1. Open **Settings**.
@@ -12,7 +15,7 @@ is not an official Roblox feature.
 4. Select **Save settings**.
 5. Restart SUNDAY when prompted.
 
-This Settings flow is the normal v1.8.15 activation path. The exact
+This Settings flow is the normal v1.8.16 activation path. The exact
 `LEGACY_COMPAT=1` startup override remains available for backward-compatible
 developer workflows.
 
@@ -27,6 +30,8 @@ Turn the setting off, save, and restart SUNDAY. If Diagnostics says the mode
 was activated by the environment, remove `LEGACY_COMPAT=1` from the process
 that starts SUNDAY and restart again. The UI setting cannot silently override
 an explicit startup environment variable.
+
+After restart, normal single-client launch remains available.
 
 ## Safety boundary
 
