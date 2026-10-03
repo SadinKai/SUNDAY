@@ -183,7 +183,7 @@ function recordSelection(adapter, environment, legacyCompatEnabled, reason, isol
       : 'UnknownRobloxIsolationAdapter',
     isolationState: isolationState || (legacyCompatEnabled
       ? ISOLATION_STATES.LEGACY_COMPAT
-      : ISOLATION_STATES.ACTIVATED),
+      : ISOLATION_STATES.UNAVAILABLE),
     reason: String(reason || DEFAULT_REASON),
   });
   adapterSelections.set(adapter, selection);
@@ -197,19 +197,19 @@ function adapterSelectionDiagnostics(adapter) {
 }
 
 /**
- * Keep the legacy implementation entirely unloaded unless the exact local
- * opt-in is present. Merely having the compatibility source in an artifact
- * cannot activate it or change the production default.
+ * Keep the legacy implementation unloaded unless the backend has resolved an
+ * enabled setting/default or the exact LEGACY_COMPAT=1 override. The backend
+ * translates that effective choice into this selector's exact environment
+ * input before constructing the immutable process-lifetime adapter.
  */
 function selectRobloxIsolationAdapter(options) {
   const opts = options || {};
   const environment = opts.environment || process.env;
   const enabled = legacyCompatRequested(environment);
   if (!enabled) {
-    const loadSingle = opts.loadSingle || (() => require('./single-client-roblox-isolation-adapter').SingleClientRobloxIsolationAdapter);
-    const SingleClientRobloxIsolationAdapter = loadSingle();
-    const adapter = new SingleClientRobloxIsolationAdapter(opts.singleOptions || {});
-    return recordSelection(adapter, environment, false, opts.singleReason || 'Normal single-client launch is active.', ISOLATION_STATES.ACTIVATED);
+    const reason = opts.unavailableReason || 'Multi-instance mode is disabled. Enable it in Settings and restart SUNDAY to launch managed Roblox clients.';
+    const adapter = new UnavailableRobloxIsolationAdapter(reason);
+    return recordSelection(adapter, environment, false, reason, ISOLATION_STATES.UNAVAILABLE);
   }
   const loadLegacy = opts.loadLegacy || (() => require('./legacy-roblox-isolation-adapter').LegacyRobloxIsolationAdapter);
   const LegacyRobloxIsolationAdapter = loadLegacy();

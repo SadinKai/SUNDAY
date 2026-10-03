@@ -15,6 +15,7 @@ const stableWaitMs = Math.max(8000, Number(process.env.SUNDAY_LIVE_WAIT_MS) || 1
 const userData = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'com.sadinkai.sundaylauncher');
 const cloneRoot = path.join(userData, 'legacy-instances');
 const webviewRoot = path.join(os.tmpdir(), `sunday-settings-live-${process.pid}`);
+const freshUserData = path.join(os.tmpdir(), `sunday-settings-fresh-${process.pid}`);
 
 if (process.env.SUNDAY_LIVE_SETTINGS_QUALIFICATION !== '1') {
   throw new Error('Refusing live Roblox qualification without SUNDAY_LIVE_SETTINGS_QUALIFICATION=1.');
@@ -30,10 +31,11 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function startPackaged(legacyCompatValue) {
+function startPackaged(legacyCompatValue, userDataOverride = '') {
   fs.mkdirSync(webviewRoot, { recursive: true });
   const environment = { ...process.env };
-  delete environment.SUNDAY_USER_DATA;
+  if (userDataOverride) environment.SUNDAY_USER_DATA = userDataOverride;
+  else delete environment.SUNDAY_USER_DATA;
   delete environment.LEGACY_COMPAT;
   if (legacyCompatValue !== undefined) environment.LEGACY_COMPAT = legacyCompatValue;
   environment.WEBVIEW2_USER_DATA_FOLDER = webviewRoot;
@@ -251,36 +253,45 @@ const baseline = await robloxSnapshot();
 
 try {
   assert(baseline.length === 0, 'A Roblox client was already running; qualification will not adopt or terminate it.');
-  child = startPackaged(undefined);
+  child = startPackaged(undefined, freshUserData);
   connection = await connectPackaged();
 
-  let initial = await selection(connection);
-  if (initial.settingEnabled || initial.enabled) {
-    connection = await restartFromSettings(connection, false);
-    initial = await selection(connection);
-  }
+  const initial = await selection(connection);
   assert(initial.appVersion === expectedVersion, `Expected packaged ${expectedVersion}, received ${initial.appVersion}.`);
-  assert(!initial.enabled && initial.environmentValue === 'ABSENT' && initial.activationSource === 'none', 'Default startup enabled multi-instance unexpectedly.');
-  assert(initial.adapter === 'SingleClientRobloxIsolationAdapter' && initial.isolationState === 'ACTIVATED', 'Default adapter was not normal single-client mode.');
+  assert(initial.enabled && initial.settingEnabled && initial.environmentValue === 'ABSENT' && initial.activationSource === 'settings', 'Fresh packaged startup did not enable Multi-instance mode from Settings by default.');
+  assert(initial.adapter === 'LegacyRobloxIsolationAdapter' && initial.isolationState === 'LEGACY_COMPAT', 'Fresh packaged startup did not select the legacy adapter.');
+  await connection.evaluate(`document.querySelector('[data-view="instances"]').click(); true`);
+  const defaultBannerVisible = await waitFor(
+    () => connection.evaluate(`/MULTI-INSTANCE MODE/.test(document.body.innerText)`),
+    10000,
+    'default multi-instance banner',
+  );
   await wait(1500);
   const afterDefaultProcesses = await robloxSnapshot();
   const defaultNewProcesses = afterDefaultProcesses.filter(row => !baseline.some(before => identity(before) === identity(row)));
   assert(defaultNewProcesses.length === 0, 'Default packaged startup spawned Roblox unexpectedly.');
+  report.default = {
+    ...initial,
+    defaultBannerVisible,
+    automaticRobloxSpawns: defaultNewProcesses.length,
+  };
+  await closePackaged(connection);
+  connection = null;
+
+  child = startPackaged(undefined);
+  connection = await connectPackaged();
+  let enabled = await selection(connection);
+  if (!enabled.settingEnabled) {
+    connection = await restartFromSettings(connection, true);
+    enabled = await selection(connection);
+  }
   const accounts = await connection.evaluate('window.sunday.accounts.list()');
   const usableAccounts = (accounts.accounts || []).filter(account => account.sessionExpired !== true).slice(0, 3);
   assert(usableAccounts.length === 3, `Three non-expired saved accounts are required; found ${usableAccounts.length}.`);
-  report.default = {
-    ...initial,
-    accountCount: (accounts.accounts || []).length,
-    usableAccountCount: usableAccounts.length,
-    automaticRobloxSpawns: defaultNewProcesses.length,
-  };
 
-  connection = await restartFromSettings(connection, true);
-  const enabled = await selection(connection);
   await connection.evaluate(`document.querySelector('[data-view="instances"]').click(); true`);
   const legacyBannerVisible = await waitFor(
-    () => connection.evaluate(`/LEGACY MULTI-INSTANCE MODE/.test(document.body.innerText)`),
+    () => connection.evaluate(`/MULTI-INSTANCE MODE/.test(document.body.innerText)`),
     10000,
     'legacy mode banner on the Launch screen',
   );
@@ -288,7 +299,7 @@ try {
   assert(enabled.settingEnabled && enabled.activationSource === 'settings', 'Settings activation source was not reported.');
   assert(enabled.adapter === 'LegacyRobloxIsolationAdapter' && enabled.isolationState === 'LEGACY_COMPAT', 'Settings did not select the legacy adapter.');
   assert(enabled.robloxFound, 'Roblox Player was not detected.');
-  assert(legacyBannerVisible, 'The packaged UI did not show LEGACY MULTI-INSTANCE MODE.');
+  assert(legacyBannerVisible, 'The packaged UI did not show MULTI-INSTANCE MODE.');
   report.settingsEnable = { ...enabled, legacyBannerVisible };
 
   const accountIds = usableAccounts.map(account => String(account.id));
@@ -382,12 +393,12 @@ try {
   connection = await restartFromSettings(connection, false);
   const disabled = await selection(connection);
   assert(!disabled.enabled && !disabled.settingEnabled && disabled.activationSource === 'none', 'Settings disablement did not persist.');
-  assert(disabled.adapter === 'SingleClientRobloxIsolationAdapter' && disabled.isolationState === 'ACTIVATED', 'Disable restart did not return to normal single-client mode.');
-  const disabledLaunch = await launchAccounts(connection, accountIds.slice(0, 1));
-  const disabledOwned = await waitOwned(connection, 1);
-  await stopExact(connection, disabledOwned.rows[0].capability);
-  await waitOwned(connection, 0, 60000);
-  report.disable = { ...disabled, normalSingleClientLaunch: true, automaticRobloxSpawns: 1 };
+  assert(disabled.adapter === 'UnavailableRobloxIsolationAdapter' && disabled.isolationState === 'UNAVAILABLE', 'Disable restart did not select the unavailable adapter.');
+  const disabledLaunch = await connection.evaluate(`window.sunday.launch.accounts(${JSON.stringify(accountIds.slice(0, 1))}, '')`);
+  const disabledInstances = await instanceSnapshot(connection);
+  assert(ownedRows(disabledInstances).length === 0, 'Disabled mode created an owned Roblox process.');
+  assert(disabledLaunch && disabledLaunch.state === 'UNAVAILABLE', 'Disabled launch did not fail closed as unavailable.');
+  report.disable = { ...disabled, launchState: disabledLaunch.state, automaticRobloxSpawns: 0 };
   await closePackaged(connection);
   connection = null;
 
@@ -405,7 +416,7 @@ try {
     connection = await connectPackaged();
     const invalid = await selection(connection);
     assert(!invalid.enabled && !invalid.environmentEnabled && invalid.environmentValue === value, `LEGACY_COMPAT=${value} enabled unexpectedly.`);
-    assert(invalid.adapter === 'SingleClientRobloxIsolationAdapter', `LEGACY_COMPAT=${value} did not retain normal single-client mode.`);
+    assert(invalid.adapter === 'UnavailableRobloxIsolationAdapter', `LEGACY_COMPAT=${value} did not retain the explicit disabled setting.`);
     report.backwardCompatibility[value] = { enabled: false, activationSource: invalid.activationSource, adapter: invalid.adapter };
     await closePackaged(connection);
     connection = null;
@@ -417,14 +428,32 @@ try {
 } finally {
   await cleanupOwned(connection);
   if (connection) {
-    try { await connection.evaluate(`window.sunday.settings.save({ multiInstanceMode: false })`); } catch (_) {}
     await closePackaged(connection);
+    connection = null;
   }
   if (child && child.exitCode == null) {
     try { child.kill(); } catch (_) {}
   }
+  try {
+    child = startPackaged('1');
+    connection = await connectPackaged();
+    const restored = await connection.evaluate(`window.sunday.settings.save({ multiInstanceMode: true })`);
+    if (!restored || restored.ok !== true || !restored.settings || restored.settings.multiInstanceMode !== true) {
+      throw new Error('The saved multi-instance preference was not restored to enabled.');
+    }
+  } catch (restoreError) {
+    report.passed = false;
+    report.failure = `${report.failure ? `${report.failure}; ` : ''}Qualification cleanup failed: ${restoreError.message}`;
+  } finally {
+    if (connection) await closePackaged(connection);
+    connection = null;
+    if (child && child.exitCode == null) {
+      try { child.kill(); } catch (_) {}
+    }
+  }
   await wait(1000);
   if (fs.existsSync(webviewRoot)) fs.rmSync(webviewRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  if (fs.existsSync(freshUserData)) fs.rmSync(freshUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   report.completedAt = new Date().toISOString();
   const reportDirectory = path.join(root, 'artifacts');
   fs.mkdirSync(reportDirectory, { recursive: true });

@@ -45,6 +45,22 @@ views.settings = async function () {
       : multiInstanceActive
         ? 'Active for this SUNDAY session.'
         : 'Disabled for this SUNDAY session.';
+  const detected = st.robloxInstallation || {};
+  const candidates = Array.isArray(detected.candidates) ? detected.candidates : [];
+  const selectedInstallationId = s.robloxInstallationId || detected.installationId || '';
+  const detectionLabel = detected.found
+    ? `${detected.source === 'manual' ? 'Manually selected' : 'Automatically detected'} · ${detected.installationType || 'Roblox installation'}`
+    : 'No verified Roblox installation detected';
+  const detectionDetail = detected.found
+    ? `${detected.displayName || 'Roblox'}${detected.version ? ` · version ${detected.version}` : ''}`
+    : 'Install Roblox Player from roblox.com, re-detect, or choose RobloxPlayerBeta.exe manually.';
+  const candidateRows = candidates.length > 1 ? `
+    <div class="roblox-candidates" role="radiogroup" aria-label="Detected Roblox installations">
+      ${candidates.map(candidate => `<label class="roblox-candidate ${candidate.id === selectedInstallationId ? 'selected' : ''}">
+        <input type="radio" name="roblox-installation" value="${esc(candidate.id)}" ${candidate.id === selectedInstallationId ? 'checked' : ''}>
+        <span><b>${esc(candidate.displayName || 'Roblox')}</b><small>${esc(candidate.installationType || 'Installation')}${candidate.version ? ` · ${esc(candidate.version)}` : ''}${candidate.legacyCompatible ? '' : ' · not available for Multi-instance mode'}</small></span>
+      </label>`).join('')}
+    </div>` : '';
   mount(`
     <div class="page-head"><h1>Settings</h1><p>Shape how SUNDAY behaves on this PC. Changes are saved to your user profile.</p></div>
     <div class="settings-layout">
@@ -67,21 +83,24 @@ views.settings = async function () {
         </div></section>
 
         <section class="settings-group" id="settings-roblox"><div class="settings-group-head"><h2>Roblox location</h2><p>Control how the installed player is detected.</p></div><div class="settings-sheet settings-fields">
+          <div class="roblox-detection-summary ${detected.found ? 'found' : 'missing'}">
+            <span class="runtime-dot">${icon(detected.found ? 'check-circle' : 'alert-circle')}</span>
+            <span><b>${esc(detectionLabel)}</b><small>${esc(detectionDetail)}</small></span>
+            <div class="inline"><button class="btn sm" data-action="redetect">${icon('refresh')} Re-detect</button><button class="btn sm ghost" data-action="set-detect" data-auto="false">${icon('folder')} Choose manually</button></div>
+          </div>
+          ${detected.found && detected.legacyCompatible === false ? `<div class="settings-note roblox-compat-warning">${icon('alert-circle')} <span>${esc(detected.compatibilityReason || 'This installation is not available for Multi-instance mode.')}</span></div>` : ''}
+          ${candidateRows}
           <div class="field">
             <label>Detection</label>
             <div class="segmented" id="set-detect" data-auto="${auto}">
               <button type="button" data-action="set-detect" data-auto="true" class="${auto ? 'on' : ''}">Auto-detect</button>
               <button type="button" data-action="set-detect" data-auto="false" class="${auto ? '' : 'on'}">Manual path</button>
             </div>
-            <div class="hint">Auto-detect checks the registry and your Roblox install folder.</div>
+            <div class="hint">Auto-detect checks verified protocol registrations, running-process evidence, Microsoft Store registrations, and bounded Windows install roots.</div>
           </div>
           <div class="field" id="set-path-row" style="${auto ? 'display:none' : ''}">
             <label for="set-path">RobloxPlayerBeta.exe path</label>
             <div class="inline"><input id="set-path" type="text" value="${esc(s.robloxPath || '')}" placeholder="Path to RobloxPlayerBeta.exe" /><button class="btn" data-action="settings-browse">${icon('folder')} Browse</button></div>
-          </div>
-          <div class="field" style="margin-bottom:0">
-            <label>Currently detected</label>
-            <div class="inline"><input type="text" readonly value="${esc(st.playerPath || 'Not found')}" /><button class="btn" data-action="redetect" data-tip="Run detection again">${icon('refresh')} Re-detect</button></div>
           </div>
         </div></section>
 
@@ -147,6 +166,9 @@ function currentSettingsDraft() {
   return {
     autoDetect: auto,
     robloxPath: $('#set-path') ? $('#set-path').value.trim() : (state.settings.robloxPath || ''),
+    robloxInstallationId: auto && document.querySelector('input[name="roblox-installation"]:checked')
+      ? document.querySelector('input[name="roblox-installation"]:checked').value
+      : '',
     multiInstanceMode: $('#set-multi-instance').checked,
     confirmCleanup: $('#set-confirm').checked,
     pollIntervalMs: parseInt($('#set-poll').value, 10),

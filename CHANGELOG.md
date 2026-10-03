@@ -2,6 +2,39 @@
 
 All notable changes to SUNDAY Launcher are documented in this file.
 
+## 1.8.17
+
+### Changed
+
+- Enabled the existing bounded `LegacyRobloxIsolationAdapter` by default for a
+  missing first-run preference while preserving explicit saved `true` and
+  `false` choices and the exact `LEGACY_COMPAT=1` compatibility override.
+- Removed automatic renderer clipboard inspection. **Paste Roblox Link** now
+  reads sanitized plain text through a native Windows command only after an
+  explicit click, avoiding the WebView clipboard-read permission prompt.
+- Replaced narrow Roblox path lookup with verified candidate discovery across
+  manual selection, registered Roblox protocols, running-process evidence,
+  bounded classic Windows roots, and dynamic AppX/MSIX package metadata.
+- Added cached re-detection, multiple-installation selection, sanitized
+  diagnostics, and actionable missing, stale, and Microsoft Store states.
+- Removed the temporary competing single-client adapter. An explicit
+  multi-instance opt-out now selects the planning-only unavailable adapter.
+
+### Release boundaries
+
+- Microsoft Store / AppX Roblox is detected without hardcoded WindowsApps or
+  XboxGames paths, but it is not supported by the legacy clone mechanism.
+  SUNDAY does not change package ACLs, copy package contents, or claim Store
+  multi-instance compatibility.
+- Classic discovery, packaged launch behavior, and installer lifecycle are
+  verified on the real-Windows release machine. Source-level AppX fixtures are
+  verified, but current Store Roblox and a non-default PackageVolume were not
+  installed on that machine and remain explicitly unqualified. That absent
+  platform scenario is reported honestly rather than treated as a VM or release
+  prerequisite.
+- The v1.8.17 release is intentionally unsigned. Checksums establish byte
+  integrity only and do not establish publisher identity.
+
 ## 1.8.16
 
 ### Changed

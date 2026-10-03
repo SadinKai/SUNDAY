@@ -45,8 +45,8 @@ test('production launch flow is adapter-bound and host launch intents contain no
   const adapter = read('src/main/roblox-isolation-adapter.js');
   const bridge = read('src/renderer/tauri-bridge.js');
   assert.match(backend, /selectRobloxIsolationAdapter\(/);
-  assert.match(adapter, /const enabled = legacyCompatRequested\(environment\);[\s\S]*if \(!enabled\)[\s\S]*new SingleClientRobloxIsolationAdapter/);
-  assert.match(read('src/main/single-client-roblox-isolation-adapter.js'), /class SingleClientRobloxIsolationAdapter/);
+  assert.match(adapter, /const enabled = legacyCompatRequested\(environment\);[\s\S]*if \(!enabled\)[\s\S]*new UnavailableRobloxIsolationAdapter/);
+  assert.equal(fs.existsSync(path.join(root, 'src', 'main', 'single-client-roblox-isolation-adapter.js')), false);
   assert.match(adapter, /opts\.loadLegacy \|\| \(\(\) => require\('\.\/legacy-roblox-isolation-adapter'\)/);
   assert.match(backend, /new LaunchCoordinator\(/);
   assert.doesNotMatch(backend, /require\('\.\/launcher'\)|require\('\.\/clones'\)|launchIsolated|doLaunch/);
@@ -66,7 +66,22 @@ test('production launch flow is adapter-bound and host launch intents contain no
   assert.doesNotMatch(read('src/renderer/actions.js').match(/async function copyDiagnostics\([\s\S]*?\n\}/)[0], /state\.logs|userData|robloxPath|capability/);
 });
 
-test('legacy compatibility is quarantined, explicit, and has no broad process command', () => {
+test('clipboard reads are explicit native commands and renderer polling is absent', () => {
+  const bridge = read('src/renderer/tauri-bridge.js');
+  const launch = read('src/renderer/views/launch.js');
+  const actions = read('src/renderer/actions.js');
+  const rust = read('src-tauri/src/lib.rs');
+  const renderer = rendererJavaScript();
+  assert.doesNotMatch(renderer, /navigator\.clipboard\.readText\s*\(/);
+  assert.doesNotMatch(launch, /checkClipboardForGameLink|lastClipboardOffer|addEventListener\(['"]focus['"][\s\S]*clipboard/i);
+  assert.match(bridge, /clipboard: \(\) => tauriInvoke\('clipboard_read_text'\)/);
+  for (const nativeCall of ['OpenClipboard', 'GetClipboardData', 'CF_UNICODETEXT', 'CloseClipboard']) assert.match(rust, new RegExp(nativeCall));
+  assert.match(launch, /data-action="paste-roblox-link"/);
+  assert.match(actions, /case 'paste-roblox-link':[\s\S]*api\.ui\.clipboard\(\)[\s\S]*parseRobloxTarget\(text\)[\s\S]*!target\.placeId/);
+  assert.match(actions, /navigator\.clipboard\.writeText/);
+});
+
+test('legacy compatibility remains bounded, exactly selected, and has no broad process command', () => {
   const selector = read('src/main/roblox-isolation-adapter.js');
   const legacy = read('src/main/legacy-roblox-isolation-adapter.js');
   const legacyNative = read('src/main/legacy-roblox-native.js');
@@ -93,7 +108,7 @@ test('legacy compatibility is quarantined, explicit, and has no broad process co
   assert.match(renderer, /selection\.selectedAdapter === 'LegacyRobloxIsolationAdapter'/);
   assert.match(renderer, /selection\.legacyCompatEnabled === true/);
   assert.match(renderer, /api\.adapterSelection\(\)/);
-  assert.match(renderer, /Normal mode launches one owned client/);
+  assert.match(renderer, /Multi-instance mode uses SUNDAY’s existing legacy compatibility adapter/);
 });
 
 test('Phase 6 production boundary is provider-neutral and synthetic code is artifact-excluded', () => {
@@ -329,31 +344,31 @@ test('current package, install, shortcut, and launch paths use Sunday.exe', () =
   assert.match(payload, /\["sunday\.exe", "node\.exe", "uninstall\.exe"\]/);
 });
 
-test('v1.8.16 release qualification uses packaged real-Windows launch gates, not provider qualification', () => {
+test('v1.8.17 release qualification uses packaged real-Windows launch gates, not provider qualification', () => {
   const packageJson = JSON.parse(read('package.json'));
   const release = read('docs/developer/release.md');
   const workflow = read('.github/workflows/build-installer.yml');
+  const smoke = read('test/smoke.js');
   assert.equal(packageJson.scripts['test:isolation-real'], undefined);
   assert.equal(packageJson.scripts['test:smoke:isolated-vm'], undefined);
   assert.equal(packageJson.scripts['test:ui:isolated-vm'], undefined);
   assert.match(release, /existing Settings-selected[\s\S]*LegacyRobloxIsolationAdapter[\s\S]*real Windows/);
   assert.doesNotMatch(workflow, /SUNDAY_ISOLATED_VM|qualify-windows-vm|test:isolation-real|environment-broker/i);
+  assert.match(smoke, /SUNDAY_PACKAGED_UI_SMOKE/);
+  assert.doesNotMatch(smoke, /SUNDAY_ISOLATED_VM/);
 });
 
 test('live packaged launch qualification is explicit, guarded, and credential silent', () => {
   const packageJson = JSON.parse(read('package.json'));
-  const normal = read('scripts/qualify-singleclient-live.mjs');
   const legacy = read('scripts/qualify-settings-live.mjs');
-  assert.equal(packageJson.scripts['test:singleclient-packaged-live'], 'node scripts/qualify-singleclient-live.mjs');
-  assert.match(normal.slice(0, 2500), /SUNDAY_LIVE_SINGLECLIENT_QUALIFICATION !== '1'/);
-  assert.match(normal, /delete environment\.LEGACY_COMPAT/);
-  assert.match(normal, /SingleClientRobloxIsolationAdapter/);
-  assert.match(normal, /launchFromAccountPage[\s\S]*launchFromMainPage/);
-  assert.match(normal, /window\.sunday\.instances\.focus[\s\S]*window\.sunday\.instances\.restart[\s\S]*stopExact/);
-  assert.doesNotMatch(normal, /console\.log\([^)]*(?:accountId|capability|launchUri)/i);
+  assert.equal(packageJson.scripts['test:singleclient-packaged-live'], undefined);
+  assert.equal(fs.existsSync(path.join(root, 'scripts', 'qualify-singleclient-live.mjs')), false);
   assert.match(legacy.slice(0, 2500), /SUNDAY_LIVE_SETTINGS_QUALIFICATION !== '1'/);
   assert.match(legacy, /selectedAccountIds = accountIds\.slice\(0, 3\)/);
-  assert.match(legacy, /SingleClientRobloxIsolationAdapter/);
+  assert.match(legacy, /LegacyRobloxIsolationAdapter/);
+  assert.match(legacy, /UnavailableRobloxIsolationAdapter/);
+  assert.match(legacy, /window\.sunday\.settings\.save\(\{ multiInstanceMode: true \}\)/);
+  assert.match(legacy, /Qualification cleanup failed/);
 });
 
 test('renderer is split into ordered responsibility modules without a framework migration', () => {
@@ -450,10 +465,10 @@ test('multi-instance preference and privacy documentation keep secrets outside r
   const backend = read('src/main/tauri-backend.js');
   const settingsView = read('src/renderer/views/settings.js');
   const privacy = read('PRIVACY.md');
-  assert.match(store, /multiInstanceMode: false/);
+  assert.match(store, /multiInstanceMode: true/);
   assert.match(store, /s\.multiInstanceMode = s\.multiInstanceMode === true/);
   assert.match(backend, /const legacyCompatibility = resolveLegacyCompatibility\(settings, externalAdapterEnvironment\)/);
-  assert.match(read('src/renderer/views/launch.js'), /label: 'LEGACY MULTI-INSTANCE MODE'/);
+  assert.match(read('src/renderer/views/launch.js'), /label: 'MULTI-INSTANCE MODE'/);
   assert.doesNotMatch(settingsView, /\.ROBLOSECURITY|auth(?:entication)?Ticket|cookieValue/i);
   assert.match(privacy, /Windows DPAPI/);
   assert.match(privacy, /raw cookie is not returned to ordinary renderer UI state/);

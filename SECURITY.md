@@ -41,11 +41,12 @@ should wait until affected users have a reasonable opportunity to update.
 
 ## Scope and important boundaries
 
-- Roblox execution is unavailable by default.
-- The saved multi-instance setting or exact `LEGACY_COMPAT=1` override enables
-  the same bounded compatibility path; it is not vendor-supported isolation.
+- A fresh profile enables the bounded legacy compatibility path by default;
+  an explicit saved `false` disables Roblox execution.
+- The exact `LEGACY_COMPAT=1` override enables that same compatibility path;
+  it is not vendor-supported isolation.
 - Process control requires current ownership and identity evidence.
-- Public v1.8.16 binaries are intentionally unsigned. Checksums establish byte
+- Public v1.8.17 binaries are intentionally unsigned. Checksums establish byte
   integrity, not publisher identity; signing inputs remain fail-closed when a
   build explicitly requires them.
 - The in-application updater remains unavailable until its complete trust chain

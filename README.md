@@ -2,8 +2,8 @@
 
 ### A Roblox account manager and multi-instance launcher for Windows.
 
-SUNDAY lets you manage multiple Roblox accounts, sign in, launch a normal
-single Roblox client, and optionally launch multiple clients from one desktop app.
+SUNDAY lets you manage multiple Roblox accounts, sign in, and launch up to
+three managed Roblox clients from one desktop app.
 
 **One app. Multiple accounts. Multiple Roblox clients.**
 
@@ -14,7 +14,8 @@ single Roblox client, and optionally launch multiple clients from one desktop ap
 
 ![SUNDAY Launch workflow showing client selection, destination, launch review, and active clients](docs/assets/sunday-launch-workflow.png)
 
-> Multi-instance launching is an explicitly enabled compatibility feature.
+> Multi-instance launching uses SUNDAY's default-on legacy compatibility path.
+> You can disable it in Settings.
 > SUNDAY is an independent project and is not affiliated with or endorsed by
 > Roblox Corporation.
 
@@ -23,7 +24,7 @@ single Roblox client, and optionally launch multiple clients from one desktop ap
 - **Manage multiple accounts** in one place.
 - **Sign in and switch accounts** without juggling browser profiles.
 - **Choose a game or destination** from SUNDAY.
-- **Launch multiple Roblox clients** through the opt-in compatibility mode.
+- **Launch up to three Roblox clients** through the legacy compatibility mode.
 - **See, focus, restart, or stop active clients** from one dashboard.
 - **Browse Roblox games and players** without leaving the app.
 
@@ -33,8 +34,8 @@ single Roblox client, and optionally launch multiple clients from one desktop ap
 2. Download `SundayInstaller.exe` from the latest release.
 3. Run the installer, then open **SUNDAY**.
 
-The v1.8.16 Windows binaries are unsigned, so Windows SmartScreen may show a
-warning. The portable `SundayPortable_1.8.16_x64.zip` is available on
+The v1.8.17 Windows binaries are unsigned, so Windows SmartScreen may show a
+warning. The portable `SundayPortable_1.8.17_x64.zip` is available on
 the same release page. SUNDAY supports Windows 10 or later on x64 and requires
 Microsoft WebView2 Runtime.
 
@@ -50,33 +51,40 @@ Account metadata stays local. Roblox session material is protected for the
 current Windows user with Windows DPAPI and is not exposed in ordinary renderer
 state. Read [Privacy](PRIVACY.md) for the complete current behavior.
 
-## Enable multi-instance mode
+## Multi-instance mode
 
-Multi-instance mode is disabled by default and uses SUNDAY's existing legacy
-Roblox compatibility adapter.
+Multi-instance mode is enabled by default on a fresh installation and uses
+SUNDAY's existing legacy Roblox compatibility adapter. No environment variable,
+PowerShell command, or manual activation is required.
 
-1. Open **Settings**.
-2. Select **Multi-instance**.
-3. Turn on **Enable multi-instance mode** and save.
-4. Restart SUNDAY when prompted.
-5. Confirm **LEGACY MULTI-INSTANCE MODE** appears before launching.
+Existing users keep an explicit saved choice. Turning the setting on or off
+requires saving and accepting a visible restart prompt; SUNDAY never forces the
+restart. The exact `LEGACY_COMPAT=1` environment value remains only as a
+backward-compatible developer override.
 
-Turning the setting off and restarting returns SUNDAY to normal single-client
-mode. The legacy `LEGACY_COMPAT=1` environment override remains
-available only for backward-compatible developer workflows; the Settings flow
-above is the normal user workflow. See
+Turning the setting off and restarting selects an unavailable adapter, so
+SUNDAY will still plan launches but will not start Roblox. See
 [Multi-instance mode](docs/user/multi-instance.md) for limitations and recovery
 steps.
 
+SUNDAY automatically discovers verified classic Roblox installations from
+bounded Windows locations, registered Roblox protocol handlers, and running
+process evidence. It also detects Microsoft Store / AppX Roblox dynamically
+from package metadata. Store Roblox is reported clearly, but it is not eligible
+for SUNDAY's file-cloning legacy multi-instance path; install classic Roblox
+from roblox.com to use Multi-instance mode.
+
 ## Troubleshooting
 
-- **A normal launch fails:** retry once, then open Diagnostics and use **Copy
-  sanitized launch diagnostics**. Normal mode never adopts an existing Roblox
+- **A launch fails:** retry once, then open Diagnostics and use **Copy
+  sanitized launch diagnostics**. SUNDAY never adopts an existing Roblox
   client, so close an unrelated client before retrying.
-- **Roblox is not detected:** choose the installed `RobloxPlayerBeta.exe` in
-  Settings.
+- **Roblox is not detected:** use **Re-detect** in Settings, then choose a
+  verified installation or select the classic `RobloxPlayerBeta.exe` manually.
+- **Microsoft Store Roblox is detected:** install the standard Windows client
+  from roblox.com before using Multi-instance mode.
 - **A session expired:** open Accounts and choose **Sign in again**.
-- **SmartScreen appears:** v1.8.16 is intentionally unsigned. Verify the file
+- **SmartScreen appears:** v1.8.17 is intentionally unsigned. Verify the file
   came from the canonical Releases page and compare its published SHA-256 hash.
 
 See [Troubleshooting](docs/user/troubleshooting.md) for more help.
@@ -85,7 +93,7 @@ See [Troubleshooting](docs/user/troubleshooting.md) for more help.
 
 [![CI](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4)
-![Version](https://img.shields.io/badge/version-1.8.16-7A5AF8)
+![Version](https://img.shields.io/badge/version-1.8.17-7A5AF8)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Roblox compatibility can change outside this project's control. The legacy
@@ -128,9 +136,9 @@ npm test
 npm run start
 ```
 
-The default adapter launches one capability-bound Roblox client. Multi-instance
-mode remains an explicit opt-in for up to three clients. Build, packaging,
-installer, and qualification commands are
+The default adapter is the bounded legacy compatibility adapter for up to three
+clients. An explicit saved opt-out selects the unavailable planning-only
+adapter. Build, packaging, installer, and qualification commands are
 documented in [Development](docs/developer/development.md) and
 [Testing](docs/developer/testing.md).
 
@@ -143,7 +151,7 @@ documented in [Development](docs/developer/development.md) and
 - Session material is DPAPI-protected and temporary sign-in profiles are
   purged.
 - Network and installer inputs are bounded and validated.
-- Automatic updater installation is not active in v1.8.16. **View releases**
+- Automatic updater installation is not active in v1.8.17. **View releases**
   opens the canonical GitHub page for a manual download.
 
 These controls reduce specific risks; they do not make the host or an account

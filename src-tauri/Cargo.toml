@@ -1,6 +1,6 @@
 [package]
 name = "sunday-launcher"
-version = "1.8.16"
+version = "1.8.17"
 description = "SUNDAY Launcher - manage multiple Roblox accounts and launch multiple Roblox clients on Windows"
 authors = ["SADINKAI"]
 license = "MIT"
@@ -24,6 +24,8 @@ tauri-plugin-single-instance = "2"
 tokio = { version = "1", features = ["time"] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
     "Win32_System_Threading",
 ] }
 

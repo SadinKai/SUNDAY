@@ -133,8 +133,8 @@ async function main() {
         capabilities: { robloxIsolation: { state: 'ACTIVE' } },
         adapterSelection: {
           legacyCompatEnabled: false,
-          selectedAdapter: 'SingleClientRobloxIsolationAdapter',
-          isolationState: 'ACTIVATED',
+          selectedAdapter: 'LegacyRobloxIsolationAdapter',
+          isolationState: 'LEGACY_COMPAT',
         },
       };
       state.accounts = [
@@ -270,15 +270,15 @@ async function main() {
 
       state.updater = { state: 'unavailable' };
       state.status = {
-        appVersion: '1.8.16',
+        appVersion: '1.8.17',
         capabilities: { updaterApply: { state: 'UNAVAILABLE' } },
         adapterSelection: {
           legacyCompatEnabled: false,
           legacyCompatEnvironmentEnabled: false,
           legacyCompatSettingEnabled: false,
           legacyCompatActivationSource: 'none',
-          selectedAdapter: 'SingleClientRobloxIsolationAdapter',
-          isolationState: 'ACTIVATED',
+          selectedAdapter: 'UnavailableRobloxIsolationAdapter',
+          isolationState: 'UNAVAILABLE',
         },
       };
       state.settings.multiInstanceMode = false;

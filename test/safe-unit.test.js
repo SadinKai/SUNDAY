@@ -11,6 +11,16 @@ const { ProcessCapabilityRegistry } = require('../src/main/process-capabilities'
 const { validateUrl, fetchWithPolicy } = require('../src/main/http-policy');
 const { InstanceKeeper } = require('../src/main/keeper');
 const store = require('../src/main/store');
+const { parseRobloxTarget } = require('../src/renderer/model');
+
+test('explicit clipboard target parsing accepts Roblox links and rejects unrelated text harmlessly', () => {
+  assert.deepEqual(parseRobloxTarget('https://www.roblox.com/games/920587237/Test'), {
+    placeId: '920587237', gameId: '', invalid: false,
+  });
+  assert.deepEqual(parseRobloxTarget('not a Roblox destination'), {
+    placeId: '', gameId: '', invalid: true,
+  });
+});
 
 test('capability gates fail closed and preserve explicit lifecycle states', () => {
   const gates = new CapabilityGates({ launch: { state: STATES.UNAVAILABLE, reason: 'not qualified' } });

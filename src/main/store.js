@@ -19,8 +19,9 @@ const { StateDatabase } = require('./state-database');
 
 const DEFAULT_SETTINGS = Object.freeze({
   robloxPath: '',            // manual override; empty = auto-detect
+  robloxInstallationId: '',  // stable, non-path identity for a discovered installation
   autoDetect: true,
-  multiInstanceMode: false,  // explicit legacy compatibility opt-in; restart required
+  multiInstanceMode: true,   // fresh-install default; explicit false remains disabled
   pollIntervalMs: 2000,      // process monitor refresh
   launchDelayMs: 5000,       // delay between instances so each boots first
   confirmCleanup: true,      // confirm before "End all"
@@ -172,6 +173,7 @@ function getSettings() {
 function normalizeSettings(input) {
   const s = Object.assign({}, DEFAULT_SETTINGS, input || {});
   s.robloxPath = typeof s.robloxPath === 'string' ? s.robloxPath : '';
+  s.robloxInstallationId = typeof s.robloxInstallationId === 'string' ? s.robloxInstallationId : '';
   s.autoDetect = !!s.autoDetect;
   s.multiInstanceMode = s.multiInstanceMode === true;
   s.confirmCleanup = !!s.confirmCleanup;

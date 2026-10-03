@@ -338,6 +338,13 @@ document.addEventListener('click', async (e) => {
     }
 
     case 'refresh-games': gamesBrowse(); break;
+    case 'redetect-from-launch': {
+      const detected = await call(() => api.detect(), { ok: false, found: false });
+      await refreshStatus();
+      if (state.view === 'instances') views.instances();
+      toast(detected && detected.found ? `${detected.displayName || 'Roblox'} detected` : 'No verified Roblox installation was found', detected && detected.found ? 'good' : 'bad');
+      break;
+    }
     case 'random-game': {
       const list = visibleGames();
       if (!list.length) { toast('Load games first', 'bad'); break; }
@@ -359,20 +366,23 @@ document.addEventListener('click', async (e) => {
       renderGamesGrid();
       break;
     }
-    case 'clip-use': {
-      const text = elAction.dataset.text || '';
+    case 'paste-roblox-link': {
+      const result = await call(() => api.ui.clipboard(), { ok: false, text: '', error: 'Clipboard text could not be read.' });
+      if (!result || !result.ok) {
+        toast((result && result.error) || 'Clipboard text could not be read.', 'bad');
+        break;
+      }
+      const text = String(result.text || '').trim();
+      const target = parseRobloxTarget(text);
+      if (!target.placeId) {
+        toast('The clipboard does not contain a Roblox game link or Place ID.', 'bad');
+        break;
+      }
       state.placeId = text;
       const inp = $('#lp-place');
       if (inp) { inp.value = text; inp.focus(); }
       updateLaunchReview();
-      const box = $('#clip-offer');
-      if (box) { box.hidden = true; box.innerHTML = ''; }
       toast('Link loaded — choose accounts and launch', 'good');
-      break;
-    }
-    case 'clip-dismiss': {
-      const box = $('#clip-offer');
-      if (box) { box.hidden = true; box.innerHTML = ''; }
       break;
     }
     case 'keepalive-off':
@@ -699,9 +709,10 @@ document.addEventListener('click', async (e) => {
     case 'redetect': {
       const saved = await call(() => api.settings.save(currentSettingsDraft()));
       if (saved && saved.ok) state.settings = saved.settings;
+      const detected = await call(() => api.detect(), { ok: false, found: false });
       await refreshStatus();
       views.settings();
-      toast(state.status && state.status.robloxFound ? 'Roblox detected' : 'Roblox not found', state.status && state.status.robloxFound ? 'good' : 'bad');
+      toast(detected && detected.found ? `${detected.displayName || 'Roblox'} detected` : 'No verified Roblox installation was found', detected && detected.found ? 'good' : 'bad');
       break;
     }
     case 'update-check': {

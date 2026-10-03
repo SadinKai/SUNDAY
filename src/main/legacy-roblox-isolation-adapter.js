@@ -868,6 +868,9 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
       return result(ISOLATION_STATES.UNAVAILABLE, this.legacyNative.getLoadError() || this.native.getLoadError() || 'Required Win32 bindings are unavailable.');
     }
     const located = this.locateRoblox();
+    if (located && located.found && located.legacyCompatible === false) {
+      return result(ISOLATION_STATES.UNAVAILABLE, located.compatibilityReason || 'This Roblox installation is not compatible with legacy multi-instance mode.');
+    }
     if (!located || !located.found || !located.playerPath) {
       return result(ISOLATION_STATES.UNAVAILABLE, 'Roblox Player was not found for legacy compatibility mode.');
     }
@@ -896,6 +899,9 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
   async allocateInstance(operation) {
     this._reclaimExitedEnvironments();
     const located = this.locateRoblox();
+    if (located && located.found && located.legacyCompatible === false) {
+      return result(ISOLATION_STATES.UNAVAILABLE, located.compatibilityReason || 'This Roblox installation is not compatible with legacy multi-instance mode.');
+    }
     if (!located || !located.found || !located.playerPath) {
       return result(ISOLATION_STATES.UNAVAILABLE, 'Roblox Player was not found.');
     }

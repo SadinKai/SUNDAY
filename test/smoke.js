@@ -1,7 +1,7 @@
 'use strict';
-function requireIsolatedVm() {
-  if (process.env.SUNDAY_ISOLATED_VM !== '1') {
-    console.error('REFUSED: native UI tests require a controlled isolated Windows test environment acknowledged with SUNDAY_ISOLATED_VM=1.');
+function requirePackagedUiSmoke() {
+  if (process.env.SUNDAY_PACKAGED_UI_SMOKE !== '1') {
+    console.error('REFUSED: packaged UI smoke requires SUNDAY_PACKAGED_UI_SMOKE=1 and a fresh SUNDAY_USER_DATA directory.');
     process.exit(2);
   }
 }
@@ -116,6 +116,18 @@ async function main() {
     };
   })`);
 
+  // ---- v1.8.17 default mode, explicit paste, and layout ----
+  await evalJs(`document.querySelector('button[data-view="instances"]').click()`);
+  await wait(150);
+  facts.v1817 = await evalJs(`(() => ({
+    multiInstanceBanner: /MULTI-INSTANCE MODE/.test(document.body.innerText),
+    legacyDescription: /Enabled.*Uses SUNDAY.s legacy Roblox compatibility path\./s.test(document.body.innerText),
+    pasteAction: Boolean(document.querySelector('[data-action="paste-roblox-link"]')),
+    horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    selectedAdapter: state.status && state.status.adapterSelection && state.status.adapterSelection.selectedAdapter,
+    installationType: state.status && state.status.robloxInstallation && state.status.robloxInstallation.installationType,
+  }))()`);
+
   // ---- 1. Games category filter ----
   await evalJs(`document.querySelector('#nav button[data-view="games"]').click()`);
   // wait for browse() to populate
@@ -185,7 +197,7 @@ async function main() {
 }
 
 if (require.main === module) {
-  requireIsolatedVm();
+  requirePackagedUiSmoke();
   main().catch(e => { console.error('smoke failed:', e.message); process.exit(1); });
 }
 

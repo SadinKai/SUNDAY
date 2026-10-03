@@ -50,15 +50,6 @@ function currentWindow() {
   catch (_) { return null; }
 }
 
-async function readClipboard() {
-  try {
-    const text = await navigator.clipboard.readText();
-    return { ok: true, text: String(text || '') };
-  } catch (err) {
-    return { ok: false, text: '', error: (err && err.message) || 'Clipboard access was denied.' };
-  }
-}
-
 function windowCall(method) {
   const appWindow = currentWindow();
   if (!appWindow || typeof appWindow[method] !== 'function') return Promise.resolve(false);
@@ -71,7 +62,7 @@ window.sunday = {
   restart: () => tauriInvoke('app_restart'),
   detect: () => tauriInvoke('roblox_detect'),
   ui: {
-    clipboard: readClipboard,
+    clipboard: () => tauriInvoke('clipboard_read_text'),
     window: {
       minimize: () => windowCall('minimize'),
       toggleMaximize: () => windowCall('toggleMaximize'),
