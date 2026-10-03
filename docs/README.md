@@ -24,5 +24,6 @@ Choose the path that matches what you are trying to do.
 - [Security policy](../SECURITY.md)
 
 Release notes remain versioned at the top of `docs`, including
-[v1.8.16](release-notes-v1.8.16.md), [v1.8.15](release-notes-v1.8.15.md), and the historical
+[v1.8.17](release-notes-v1.8.17.md), [v1.8.16](release-notes-v1.8.16.md),
+[v1.8.15](release-notes-v1.8.15.md), and the historical
 [v1.8.14](release-notes-v1.8.14.md).

@@ -23,8 +23,9 @@ flowchart TB
 
     subgraph Isolation[Roblox execution boundary]
       Selector[Adapter selector]
-      Single[SingleClientRobloxIsolationAdapter]
       Legacy[LegacyRobloxIsolationAdapter]
+      Unavailable[UnavailableRobloxIsolationAdapter]
+      Discovery[Verified Roblox discovery]
       Slots[Clone validation and slot leases]
     end
 
@@ -35,8 +36,9 @@ flowchart TB
     RPC --> Capabilities
     RPC --> Network
     Coordinator --> Selector
-    Selector -->|default| Single
-    Selector -->|saved opt-in or LEGACY_COMPAT=1| Legacy
+    Selector -->|missing or saved true; LEGACY_COMPAT=1| Legacy
+    Selector -->|explicit saved false| Unavailable
+    Coordinator --> Discovery
     Legacy --> Slots
 ```
 
@@ -45,6 +47,12 @@ flowchart TB
 `src/renderer` contains the HTML, CSS, view model, and minimal Tauri bridge. The
 renderer sends named commands; it does not receive raw process handles or direct
 filesystem authority.
+
+The renderer never performs a browser clipboard read. An explicit
+**Paste Roblox Link** gesture invokes a bounded Rust command that reads and
+sanitizes `CF_UNICODETEXT` through Win32 before returning plain text to the
+local parser. Startup, focus, navigation, and timers do not inspect clipboard
+contents.
 
 `src-tauri` owns the Windows desktop window, Tauri capabilities, single-instance
 plugin, bundled Node resource, and communication with the backend. The
@@ -80,6 +88,13 @@ adapter to prepare and launch, and records operation state. Keeper/rejoin logic
 can request a relaunch only through this coordinator and only after a matching
 owned exit. It is not a general process watcher or kill-all service.
 
+`roblox.js` returns ranked verified installation candidates rather than trusting
+a filename. Evidence can come from a validated manual override, registered
+Roblox protocols, an observed running process path, bounded classic version
+roots, or registered AppX/MSIX package and manifest metadata. Running processes
+remain evidence only and are never adopted. Normal renderer status is sanitized
+to installation type, display name, source, version, and compatibility state.
+
 ## Process capabilities
 
 Observation and ownership are separate. An opaque process capability binds PID,
@@ -93,24 +108,27 @@ and an externally observed client is never adopted automatically.
 After persistent settings are loaded, `roblox-isolation-adapter.js` selects the
 adapter before `LaunchCoordinator` is constructed:
 
-- Default: `SingleClientRobloxIsolationAdapter` launches at most one client and
-  accepts only the spawned PID or its direct child after executable file,
-  creation identity, path, and responsive-window qualification.
-- Saved `multiInstanceMode: true` or exact `LEGACY_COMPAT=1`:
-  `LegacyRobloxIsolationAdapter` enables the same bounded compatibility path.
+- A missing first-run preference or saved `multiInstanceMode: true` selects
+  `LegacyRobloxIsolationAdapter`; exact `LEGACY_COMPAT=1` remains a
+  backward-compatible override.
+- An explicit saved `multiInstanceMode: false` selects
+  `UnavailableRobloxIsolationAdapter`, which permits launch planning but cannot
+  execute Roblox.
 
 The selected adapter is immutable for the process lifetime, so changing the
 saved preference requires a controlled application restart. Diagnostics records
 whether the saved setting or environment override selected it.
 
-The default adapter refuses to adopt an existing Roblox process and exposes no
-broad termination operation. Its focus, stop, and restart actions resolve the
-same opaque capability used by the legacy adapter.
-
 The legacy adapter retains the established singleton handling, clone builder,
 tree validation, three-slot allocator, `RELEASED_BUT_BUSY` behavior, ownership
 capabilities, cleanup, and restart rules. Generated clone paths are validated
 before spawn, and no broad foreign-process cleanup is available.
+
+Microsoft Store / AppX installations are discovered dynamically using Windows
+package registration, manifest, application ID, and actual InstallLocation
+metadata. The legacy clone adapter rejects them before allocation because
+package contents are protected and were not qualified for this mechanism. No
+WindowsApps ACL is changed and no package content is copied.
 
 ## Network boundary
 
@@ -122,7 +140,7 @@ general-purpose remote navigation channel.
 ## Update and release trust
 
 The release-trust code can validate signed canonical manifests with monotonic
-sequence, publisher, key identifier, and artifact digests. The v1.8.16
+sequence, publisher, key identifier, and artifact digests. The v1.8.17
 assets are intentionally unsigned and are distributed with SHA-256 checksums.
 The update coordinator cannot apply downloaded code merely because a public key
 exists. In-application update application remains unavailable until

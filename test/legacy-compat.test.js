@@ -18,10 +18,6 @@ const { LegacyCloneManager, LegacyRobloxIsolationAdapter } = require('../src/mai
 
 test('LEGACY_COMPAT must equal 1 before legacy implementation is loaded', async () => {
   let loads = 0;
-  let singleLoads = 0;
-  class SelectedSingle {
-    async preflight() { return { ok: true, state: ISOLATION_STATES.ACTIVATED, reason: 'normal' }; }
-  }
   for (const [label, environment, observedValue] of [
     ['absent', {}, 'ABSENT'],
     ['zero', { LEGACY_COMPAT: '0' }, '0'],
@@ -30,22 +26,20 @@ test('LEGACY_COMPAT must equal 1 before legacy implementation is loaded', async 
     const off = selectRobloxIsolationAdapter({
       environment,
       reason: 'safe default',
-      singleReason: 'normal single-client',
-      loadSingle() { singleLoads += 1; return SelectedSingle; },
+      unavailableReason: 'multi-instance disabled',
       loadLegacy() { loads += 1; throw new Error('must not load'); },
     });
     assert.equal(loads, 0, `${label} must not load the legacy implementation`);
-    assert.equal(off.constructor.name, 'SelectedSingle');
-    assert.equal((await off.preflight()).state, ISOLATION_STATES.ACTIVATED);
+    assert.equal(off.constructor.name, 'UnavailableRobloxIsolationAdapter');
+    assert.equal((await off.preflight()).state, ISOLATION_STATES.UNAVAILABLE);
     assert.deepEqual(adapterSelectionDiagnostics(off), {
       legacyCompatEnabled: false,
       legacyCompatEnvironmentValue: observedValue,
-      selectedAdapter: 'SelectedSingle',
-      isolationState: ISOLATION_STATES.ACTIVATED,
-      reason: 'normal single-client',
+      selectedAdapter: 'UnavailableRobloxIsolationAdapter',
+      isolationState: ISOLATION_STATES.UNAVAILABLE,
+      reason: 'multi-instance disabled',
     });
   }
-  assert.equal(singleLoads, 3);
   assert.equal(legacyCompatRequested({ LEGACY_COMPAT: 'true' }), false);
   assert.equal(legacyCompatRequested({ LEGACY_COMPAT: '1' }), true);
 

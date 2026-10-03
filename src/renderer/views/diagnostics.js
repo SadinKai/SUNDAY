@@ -22,9 +22,9 @@ views.diagnostics = async function () {
       <section class="diag-section"><h2>Launch capability</h2><div class="kv">
         ${kv('Multi-instance', g.multiInstance)}${kv('LEGACY_COMPAT process value', g.legacyCompatEnvironmentValue)}${kv('Saved preference', g.legacyCompatSettingEnabled)}${kv('Activation source', g.legacyCompatActivationSource)}${kv('legacyCompatEnabled', g.legacyCompatEnabled)}${kv('selectedAdapter', g.selectedAdapter)}${kv('isolationState', g.isolationState)}${kv('isolation reason', g.isolationReason)}${kv('Guard', g.guard)}
       </div></section>
-      <section class="diag-section diag-wide"><h2>Paths and data</h2><div class="kv">
-        ${kv('Roblox', g.robloxFound ? (g.robloxVersion + ' via ' + g.robloxSource) : 'not found')}${kv('Roblox path', g.robloxPath)}${kv('Data folder', g.userData)}${kv('Log file', g.logFile)}
-      </div><details class="diag-technical"><summary>Technical launch state</summary><div class="a">Normal mode launches one owned client. Multi-instance mode uses the opt-in legacy compatibility adapter. Copied diagnostics omit paths, logs, credentials, tickets, and capability values.</div></details></section>
+      <section class="diag-section diag-wide"><h2>Installation and local data</h2><div class="kv">
+        ${kv('Roblox', g.robloxFound ? `${g.robloxDisplayName || 'Roblox'} · ${g.robloxVersion || 'unknown version'}` : 'not found')}${kv('Installation type', g.robloxInstallationType)}${kv('Detection source', g.robloxSource)}${kv('Legacy compatible', g.robloxLegacyCompatible)}${kv('Data folder', g.userData)}${kv('Log file', g.logFile)}
+      </div><details class="diag-technical"><summary>Technical launch state</summary><div class="a">Multi-instance mode uses SUNDAY’s existing legacy compatibility adapter. Normal diagnostics omit Roblox installation paths, credentials, tickets, and capability values.</div></details></section>
     </div>
     <div class="row-split diag-log-head">
       <div><h2>Live log</h2><p>Newest runtime events from this SUNDAY process.</p></div>

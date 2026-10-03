@@ -2,7 +2,7 @@
     "$schema":  "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName":  "SUNDAY Launcher",
     "mainBinaryName":  "Sunday",
-    "version": "1.8.16",
+    "version": "1.8.17",
     "identifier":  "com.sadinkai.sundaylauncher",
     "build":  {
                   "frontendDist":  "../src/renderer",

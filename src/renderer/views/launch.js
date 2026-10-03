@@ -138,27 +138,6 @@ function renderWatchCard() {
     }).join('')}</div>`;
 }
 
-/* ----------------------------- Clipboard quick-join ----------------------------- */
-/* If a Roblox game link is sitting on the clipboard when Instances is opened
-   or refocused, offer it - one click drops it into the launch box. Local only. */
-let lastClipboardOffer = '';
-async function checkClipboardForGameLink() {
-  if (state.view !== 'instances' || !api.ui || !api.ui.clipboard) return;
-  const r = await call(() => api.ui.clipboard(), { ok: false, text: '' });
-  const text = (r && r.text || '').trim();
-  if (!text || text === lastClipboardOffer) return;
-  const target = parseRobloxTarget(text);
-  if (!target.placeId) return;
-  lastClipboardOffer = text;
-  const box = $('#clip-offer');
-  if (!box) return;
-  box.hidden = false;
-  box.innerHTML = `${icon('copy')} <span>Roblox link on your clipboard - place <b>${esc(target.placeId)}</b>${target.gameId ? ' (specific server)' : ''}</span>
-    <button class="btn sm primary" data-action="clip-use" data-text="${esc(text)}">Use it</button>
-    <button class="btn sm ghost" data-action="clip-dismiss">Dismiss</button>`;
-}
-window.addEventListener('focus', () => { setTimeout(checkClipboardForGameLink, 150); });
-
 /* ----------------------------- Sessions ----------------------------- */
 /* A session = a saved multi-launch setup (accounts + target + arrange).
    One click reproduces the whole thing. Stored locally, survives restarts. */
@@ -236,6 +215,7 @@ function launchFailureBanner() {
     <div class="inline">
       ${retryLastLaunch && actions.has('RETRY') ? `<button class="btn sm primary" data-action="retry-last-launch">${icon('refresh')} Retry</button>` : ''}
       ${actions.has('OPEN_ACCOUNTS') ? `<button class="btn sm" data-action="goto-accounts">${icon('users')} Accounts</button>` : ''}
+      ${actions.has('REDETECT_ROBLOX') ? `<button class="btn sm" data-action="redetect-from-launch">${icon('refresh')} Re-detect Roblox</button>` : ''}
       ${actions.has('OPEN_SETTINGS') ? `<button class="btn sm" data-action="goto-settings">${icon('settings')} Open Settings</button>` : ''}
       <button class="btn sm" data-action="goto-diagnostics">${icon('activity')} View Diagnostics</button>
     </div>
@@ -265,10 +245,17 @@ function instanceRuntimeStatus(s) {
       detail: 'Choose the Roblox executable in Settings.', action: 'goto-settings', actionLabel: 'Open Settings',
     };
   }
+  const installation = s.robloxInstallation || {};
+  if (legacyCompatibilityMode() && installation.legacyCompatible === false) {
+    return {
+      tone: 'bad', icon: 'alert-circle', label: 'Classic Roblox Player required',
+      detail: 'Microsoft Store Roblox cannot use SUNDAY Multi-instance mode.', action: 'goto-settings', actionLabel: 'Open Settings',
+    };
+  }
   if (legacyCompatibilityMode()) {
     return {
-      tone: 'good', icon: 'check-circle', label: 'LEGACY MULTI-INSTANCE MODE',
-      detail: 'Ready for SUNDAY-managed clients', action: 'goto-diagnostics', actionLabel: 'Details',
+      tone: 'good', icon: 'check-circle', label: 'MULTI-INSTANCE MODE',
+      detail: 'Enabled · Uses SUNDAY’s legacy Roblox compatibility path.', action: 'goto-diagnostics', actionLabel: 'Details',
     };
   }
   if (capabilityAvailable('robloxIsolation')) {
@@ -293,7 +280,10 @@ function launchDestinationSummary(value) {
 
 function launchActionState(selectedCount, destination) {
   const robloxDetected = !!(state.status && state.status.robloxFound);
+  const installationCompatible = !(state.status && state.status.robloxInstallation
+    && state.status.robloxInstallation.legacyCompatible === false);
   const executionAvailable = robloxDetected
+    && installationCompatible
     && (legacyCompatibilityMode() || capabilityAvailable('robloxIsolation'));
   const hasSelection = selectedCount > 0;
   const destinationValid = !(destination && destination.invalid);
@@ -303,13 +293,14 @@ function launchActionState(selectedCount, destination) {
   if (!hasSelection) readiness = 'Select at least one account';
   else if (!destinationValid) readiness = 'Check destination';
   else if (!countAllowed) readiness = 'Enable Multi-instance mode for multiple accounts';
+  else if (robloxDetected && !installationCompatible) readiness = 'Classic Roblox Player required for Multi-instance mode';
   else if (!executionAvailable && !robloxDetected) readiness = 'Roblox not detected · locate Roblox to continue';
 
   return {
     executionAvailable,
     enabled: hasSelection && destinationValid && countAllowed,
-    label: executionAvailable ? 'Launch' : (robloxDetected ? 'View Diagnostics' : 'Locate Roblox'),
-    action: executionAvailable ? 'launch' : (robloxDetected ? 'goto-diagnostics' : 'goto-settings'),
+    label: executionAvailable ? 'Launch' : (robloxDetected && installationCompatible ? 'View Diagnostics' : 'Locate Roblox'),
+    action: executionAvailable ? 'launch' : (robloxDetected && installationCompatible ? 'goto-diagnostics' : 'goto-settings'),
     readiness,
   };
 }
@@ -391,7 +382,7 @@ views.instances = function () {
       <section class="launch-stage launch-stage-destination" aria-labelledby="destination-heading">
         ${stageHeading(2, 'Destination', 'Choose where they go', 'destination-heading')}
         <label class="launch-field-label" for="lp-place">Game link or Place ID</label>
-        <div class="launch-destination-input">${icon('compass')}<input id="lp-place" type="text" placeholder="Roblox home, game link, or Place ID" value="${esc(state.placeId)}" aria-describedby="launch-review-detail" /></div>
+        <div class="launch-destination-input">${icon('compass')}<input id="lp-place" type="text" placeholder="Roblox home, game link, or Place ID" value="${esc(state.placeId)}" aria-describedby="launch-review-detail" /><button type="button" class="launch-paste-action" data-action="paste-roblox-link" data-tip="Read a Roblox link from the clipboard">${icon('copy')}<span>Paste</span></button></div>
         <div class="launch-destination-preview">
           <span class="destination-mark">${icon('box')}</span>
           <span><b id="launch-review-target" class="${destination.invalid ? 'is-invalid' : ''}">${esc(destination.label)}</b><small id="launch-review-detail">${esc(destination.detail)}</small></span>
@@ -458,8 +449,6 @@ views.instances = function () {
           </div>
         </div>
       </section>
-      <div id="clip-offer" class="clip-offer" hidden></div>
-
       <section class="active-section" aria-labelledby="active-heading">
           <div class="active-heading">
             <div><h2 id="active-heading">Active clients</h2><p>Live clients launched or observed by SUNDAY.</p></div>
@@ -492,7 +481,6 @@ views.instances = function () {
   $('#main-content').setAttribute('aria-labelledby', 'view-heading');
   renderInstanceList();
   renderWatchdogChip();
-  setTimeout(checkClipboardForGameLink, 200);
 };
 
 function renderInstanceList() {

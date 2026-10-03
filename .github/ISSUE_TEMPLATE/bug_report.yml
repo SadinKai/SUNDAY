@@ -13,7 +13,7 @@ body:
     id: version
     attributes:
       label: SUNDAY version or commit
-      placeholder: 1.8.16 or a commit SHA
+      placeholder: 1.8.17 or a commit SHA
     validations:
       required: true
 

@@ -2,22 +2,20 @@
 
 SUNDAY provides two explicit adapter states.
 
-## Normal single-client mode
+## Planning-only unavailable mode
 
-Without either the saved multi-instance preference or exact
-`LEGACY_COMPAT=1` override, startup selects
-`SingleClientRobloxIsolationAdapter`. It launches at most one client, refuses to
-adopt an existing Roblox process, and requires exact executable file identity,
-process creation identity, path continuity, and a responsive Roblox client
-window before issuing an ownership capability.
+An explicit saved `multiInstanceMode: false` preference selects
+`UnavailableRobloxIsolationAdapter`. It can produce a launch plan but cannot
+execute Roblox. Removing the preference on a fresh profile does not select this
+state because v1.8.17 defaults a missing preference to enabled.
 
 ## Legacy compatibility mode
 
-On current source builds, a saved `multiInstanceMode: true` preference selects
-`LegacyRobloxIsolationAdapter` at startup. The exact `LEGACY_COMPAT=1`
-environment value remains a backward-compatible override. In either case the
-UI displays **LEGACY MULTI-INSTANCE MODE** only after the backend confirms the
-legacy adapter is selected.
+On v1.8.17, a missing first-run preference or saved `multiInstanceMode: true`
+selects `LegacyRobloxIsolationAdapter` at startup. The exact
+`LEGACY_COMPAT=1` environment value remains a backward-compatible override. In
+either case the UI displays **MULTI-INSTANCE MODE** and the legacy compatibility
+description only after the backend confirms the adapter is selected.
 
 The adapter preserves the established:
 
@@ -32,6 +30,11 @@ Clone validation requires the player executable, an accessible `content`
 directory, required top-level files, and containment of generated paths. Known
 directory reparse points are reproduced deliberately; unexpected path escape
 fails before spawn.
+
+The adapter accepts only a verified classic Win32 Roblox candidate. AppX/MSIX
+packages are detected and reported, but fail preflight with an actionable
+compatibility reason before clone allocation. Package ACLs and contents are not
+modified.
 
 ## Limitations
 

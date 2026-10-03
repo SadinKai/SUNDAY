@@ -40,7 +40,8 @@ function resolveLegacyCompatibility(settings, environment) {
     ? String(sourceEnvironment.LEGACY_COMPAT)
     : 'ABSENT';
   const environmentEnabled = legacyCompatRequested(sourceEnvironment);
-  const settingEnabled = !!(settings && settings.multiInstanceMode === true);
+  const hasPersistedPreference = !!(settings && Object.prototype.hasOwnProperty.call(settings, 'multiInstanceMode'));
+  const settingEnabled = hasPersistedPreference ? settings.multiInstanceMode === true : true;
   const enabled = environmentEnabled || settingEnabled;
   return Object.freeze({
     enabled,
@@ -64,14 +65,14 @@ function makeBackend(ctx) {
   const externalAdapterEnvironment = Object.freeze(Object.prototype.hasOwnProperty.call(process.env, 'LEGACY_COMPAT')
     ? { LEGACY_COMPAT: String(process.env.LEGACY_COMPAT) }
     : {});
-  const legacyReason = "LEGACY MULTI-INSTANCE MODE: Uses SUNDAY Launcher's legacy compatibility mechanism. This is not vendor supported isolation.";
-  const singleClientReason = 'NORMAL SINGLE-CLIENT MODE: Launches one SUNDAY-owned Roblox client without compatibility mode.';
+  const legacyReason = "MULTI-INSTANCE MODE: Enabled. Uses SUNDAY's legacy Roblox compatibility path. This is not vendor-supported isolation.";
+  const disabledReason = 'Multi-instance mode is disabled. Enable it in Settings and restart SUNDAY to launch managed Roblox clients.';
   const gates = new CapabilityGates({
     singleOwner: { state: STATES.ACTIVE, reason: 'The Tauri single-instance broker owns this backend.' },
     processControl: { state: STATES.PREPARING, reason: 'Native process identity validation is initializing.' },
     robloxIsolation: {
       state: STATES.PREPARING,
-      reason: 'Normal single-client launch is initializing.',
+      reason: 'Roblox compatibility mode is initializing.',
     },
     updaterApply: {
       state: STATES.UNAVAILABLE,
@@ -88,7 +89,7 @@ function makeBackend(ctx) {
   try { native.init(); } catch (err) { logger.warn('Native initialization failed', err && err.message); }
   if (native.isAvailable()) {
     gates.set('processControl', STATES.QUALIFIED, 'Native process creation identity and image-path revalidation are available.');
-    gates.set('robloxIsolation', STATES.ACTIVE, legacyCompatibility.enabled ? legacyReason : singleClientReason);
+    gates.set('robloxIsolation', legacyCompatibility.enabled ? STATES.ACTIVE : STATES.UNAVAILABLE, legacyCompatibility.enabled ? legacyReason : disabledReason);
   } else {
     gates.set('processControl', STATES.FAILED, native.getLoadError() || 'Native process validation is unavailable.');
     gates.set('robloxIsolation', STATES.FAILED, native.getLoadError() || 'Windows process identity validation is unavailable.');
@@ -153,16 +154,8 @@ function makeBackend(ctx) {
   const isolationReason = gates.get('robloxIsolation').reason;
   const isolationAdapter = selectRobloxIsolationAdapter({
     reason: isolationReason,
-    singleReason: singleClientReason,
+    unavailableReason: disabledReason,
     environment: legacyCompatibility.selectorEnvironment,
-    singleOptions: {
-      logger,
-      nativeApi: native,
-      processCapabilities,
-      ownerId,
-      monitor,
-      locateRoblox: () => roblox.locate(store.getSettings()),
-    },
     legacyOptions: {
       logger,
       nativeApi: native,
@@ -286,14 +279,15 @@ function makeBackend(ctx) {
   function buildStatus() {
     const settings = store.getSettings();
     const loc = roblox.locate(settings);
+    const publicLocation = roblox.sanitizeLocation(loc);
     return {
       ok: true,
       appVersion,
-      robloxFound: loc.found,
-      playerPath: loc.playerPath,
-      version: loc.version,
-      source: loc.source,
-      candidates: loc.candidates,
+      robloxFound: publicLocation.found,
+      version: publicLocation.version,
+      source: publicLocation.source,
+      robloxInstallation: publicLocation,
+      candidates: publicLocation.candidates,
       multiInstance: legacyCompatibility.enabled,
       ffiAvailable: native.isAvailable(),
       ffiError: native.getLoadError(),
@@ -302,7 +296,7 @@ function makeBackend(ctx) {
         state: isolationState(),
         mode: adapterSelection.selectedAdapter === 'LegacyRobloxIsolationAdapter'
           ? 'LEGACY_COMPAT'
-          : 'NORMAL_SINGLE_CLIENT',
+          : 'DISABLED',
         implementation: adapterSelection.selectedAdapter,
         qualified: native.isAvailable(),
         reason: adapterSelection.reason,
@@ -447,9 +441,15 @@ function makeBackend(ctx) {
     },
     async roblox_detect() {
       const settings = store.getSettings();
-      const loc = roblox.locate(settings);
-      logger.info('Roblox detection: ' + (loc.found ? (loc.source + ' -> ' + loc.playerPath) : 'NOT FOUND'));
-      return Object.assign({ ok: true }, loc);
+      const loc = roblox.locate(settings, { force: true });
+      const publicLocation = roblox.sanitizeLocation(loc);
+      logger.info('Roblox detection completed', {
+        found: publicLocation.found,
+        source: publicLocation.source,
+        installationType: publicLocation.installationType,
+        candidateCount: publicLocation.candidates.length,
+      });
+      return Object.assign({ ok: true }, publicLocation);
     },
     async launch_quick(payload) {
       const count = Math.max(1, Math.min(3, asInt(payload.count) || 1));
@@ -644,6 +644,12 @@ function makeBackend(ctx) {
         if (pathStatus.normalized) partial.robloxPath = pathStatus.normalized;
       }
       const settings = store.saveSettings(partial);
+      if (Object.prototype.hasOwnProperty.call(partial, 'robloxPath')
+        || Object.prototype.hasOwnProperty.call(partial, 'robloxInstallationId')
+        || Object.prototype.hasOwnProperty.call(partial, 'autoDetect')
+        || Object.prototype.hasOwnProperty.call(partial, 'multiInstanceMode')) {
+        roblox.invalidateCache();
+      }
       if (settings.pollIntervalMs !== before.pollIntervalMs) monitor.setPollInterval(settings.pollIntervalMs);
       return {
         ok: true,
@@ -654,6 +660,7 @@ function makeBackend(ctx) {
     async settings_reset() {
       const before = store.getSettings();
       const settings = store.resetSettings();
+      roblox.invalidateCache();
       monitor.setPollInterval(settings.pollIntervalMs);
       return {
         ok: true,
@@ -676,6 +683,7 @@ function makeBackend(ctx) {
     async diag_get() {
       const settings = store.getSettings();
       const loc = roblox.locate(settings);
+      const publicLocation = roblox.sanitizeLocation(loc);
       const adapterDiagnostics = typeof isolationAdapter.diagnostics === 'function' ? isolationAdapter.diagnostics() : null;
       const latestPlan = launchCoordinator.list(1)[0] || null;
       const latestFailure = latestPlan && Array.isArray(latestPlan.operations)
@@ -687,10 +695,13 @@ function makeBackend(ctx) {
         sundayVersion: appVersion,
         windows: { type: os.type(), release: os.release(), arch: process.arch },
         roblox: {
-          detected: !!loc.found,
-          version: loc.version || null,
-          source: loc.source || 'none',
-          executableName: loc.found ? 'RobloxPlayerBeta.exe' : null,
+          detected: publicLocation.found,
+          version: publicLocation.version,
+          source: publicLocation.source,
+          installationType: publicLocation.installationType,
+          displayName: publicLocation.displayName,
+          legacyCompatible: publicLocation.legacyCompatible,
+          candidateCount: publicLocation.candidates.length,
         },
         adapter: {
           selected: adapterSelection.selectedAdapter,
@@ -742,11 +753,14 @@ function makeBackend(ctx) {
           isolationReason: adapterSelection.reason,
           isolationAdapter: `${adapterSelection.isolationState}: ${adapterSelection.reason}`,
           legacyCompatibility: adapterDiagnostics,
-          robloxFound: loc.found,
-          robloxPath: loc.playerPath,
-          robloxVersion: loc.version,
-          robloxSource: loc.source,
-          candidates: loc.candidates,
+          robloxFound: publicLocation.found,
+          robloxVersion: publicLocation.version,
+          robloxSource: publicLocation.source,
+          robloxInstallationType: publicLocation.installationType,
+          robloxDisplayName: publicLocation.displayName,
+          robloxLegacyCompatible: publicLocation.legacyCompatible,
+          robloxCompatibilityReason: publicLocation.compatibilityReason,
+          candidates: publicLocation.candidates,
           sanitizedLaunchDiagnostics,
         },
       };

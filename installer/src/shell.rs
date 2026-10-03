@@ -583,7 +583,7 @@ mod shortcut_tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("sunday-shortcut-test-{stamp}"));
         fs::create_dir(&root).expect("create shortcut test root");
-        let workdir = root.join("SUNDAY Launcher Qualification 1.8.16");
+        let workdir = root.join("SUNDAY Launcher Qualification 1.8.17");
         fs::create_dir(&workdir).expect("create spaced work directory");
         let target = workdir.join("Sunday.exe");
         fs::copy(

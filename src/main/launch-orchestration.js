@@ -23,10 +23,13 @@ function classifyLaunchFailure(input) {
   const raw = String(input || '');
   const value = raw.toLowerCase();
   if (/robloxplayerbeta\.exe was not found|roblox player was not found|roblox not found/.test(value)) {
-    return { code: 'ROBLOX_NOT_FOUND', reason: 'RobloxPlayerBeta.exe was not found. Locate it in Settings.', actions: ['OPEN_SETTINGS', 'VIEW_DIAGNOSTICS'] };
+    return { code: 'ROBLOX_NOT_FOUND', reason: 'Roblox Player was not found. Re-detect it or choose RobloxPlayerBeta.exe in Settings.', actions: ['REDETECT_ROBLOX', 'OPEN_SETTINGS', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/microsoft store roblox|store app|classic roblox player/.test(value) && /legacy|multi-instance|not compatible|supports/.test(value)) {
+    return { code: 'STORE_LEGACY_UNSUPPORTED', reason: 'Microsoft Store Roblox is not available for SUNDAY Multi-instance mode. Install the classic Roblox Player from roblox.com, then re-detect.', actions: ['REDETECT_ROBLOX', 'OPEN_SETTINGS', 'VIEW_DIAGNOSTICS'] };
   }
   if (/normal mode launches one client|multi-instance mode/.test(value) && /enable/.test(value)) {
-    return { code: 'MULTI_INSTANCE_DISABLED', reason: 'Normal mode launches one client. Enable Multi-instance mode in Settings to launch multiple accounts.', actions: ['OPEN_SETTINGS'] };
+    return { code: 'MULTI_INSTANCE_DISABLED', reason: 'Multi-instance mode is disabled. Enable it in Settings and restart SUNDAY.', actions: ['OPEN_SETTINGS'] };
   }
   if (/already running|will not adopt/.test(value)) {
     return { code: 'CLIENT_ALREADY_RUNNING', reason: 'A Roblox client is already running. SUNDAY will not adopt or replace it.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };

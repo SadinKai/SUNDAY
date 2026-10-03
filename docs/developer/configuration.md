@@ -8,11 +8,13 @@ that file.
 
 ## Application settings
 
-The `multiInstanceMode` boolean defaults to `false`. On startup, the backend
-loads it before adapter selection. A saved `true` value selects the same
-`LegacyRobloxIsolationAdapter` used by the historical environment opt-in. A
-change requires an application restart because the selected adapter is
-intentionally immutable for the process lifetime.
+The `multiInstanceMode` boolean defaults to `true` only when the preference has
+never existed. Explicit saved `true` and `false` values survive normalization
+and upgrades. On startup, the backend loads the preference before adapter
+selection: missing or `true` selects `LegacyRobloxIsolationAdapter`; explicit
+`false` selects `UnavailableRobloxIsolationAdapter`. A change requires a
+user-confirmed application restart because the selected adapter is intentionally
+immutable for the process lifetime.
 
 The renderer receives only the setting, selected-adapter status, activation
 source, and restart requirement. No Roblox cookie or other credential is stored
@@ -22,16 +24,21 @@ in this preference.
 
 | Variable | Meaning | Safe default |
 | --- | --- | --- |
-| `LEGACY_COMPAT` | Backward-compatible override that selects `LegacyRobloxIsolationAdapter` only when exactly `1`. | `0` / absent |
+| `LEGACY_COMPAT` | Backward-compatible override that selects `LegacyRobloxIsolationAdapter` only when exactly `1`. | absent; saved/default setting decides |
 | `SUNDAY_USER_DATA` | Overrides the runtime-state directory for controlled tests. | OS application-data location |
 | `SUNDAY_TEST_EXE` | Exact packaged executable for guarded real-Windows launch qualification. | absent |
-| `SUNDAY_LIVE_SINGLECLIENT_QUALIFICATION` | Explicit guard for the authorized packaged normal-launch test. | absent |
 | `SUNDAY_LIVE_SETTINGS_QUALIFICATION` | Explicit guard for the authorized packaged multi-instance test. | absent |
 
 `LEGACY_COMPAT=true` does not enable the legacy adapter. An exact environment
 value of `1` takes effect even when the saved preference is off. The backend
 exposes the saved preference, environment match, activation source, selected
 adapter, and isolation reason through diagnostics.
+
+`robloxInstallationId` stores only a stable non-secret candidate identifier for
+an explicit selection. `robloxPath` remains the user-entered manual classic
+path. Automatic results are cached briefly and invalidated by re-detection,
+settings changes, or missing/stale installation evidence. AppX install paths
+come from package registration metadata and are not hardcoded.
 
 ## Signing and release inputs
 
@@ -50,7 +57,7 @@ adapter, and isolation reason through diagnostics.
 
 Never put real signing values into `.env.example`, GitHub issues, build logs, or
 source control. These inputs describe optional future controlled signing
-workflows; the v1.8.16 binaries are unsigned. A build that explicitly
+workflows; the v1.8.17 binaries are unsigned. A build that explicitly
 requires signing still fails closed when its inputs are missing or invalid.
 
 ## Repository hygiene

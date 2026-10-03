@@ -22,7 +22,8 @@ npm test
 
 The suite covers persistence, concurrent writers, release trust, process
 identity, environment RPC, orchestration, synthetic isolation, migration,
-runtime adapter selection, legacy clone/reparse handling, slot reuse, network
+runtime adapter selection, native clipboard policy, verified Roblox discovery,
+AppX fixture handling, legacy clone/reparse handling, slot reuse, network
 policy, installer policy, and source policy. It must not launch Roblox or use
 real credentials.
 
@@ -50,7 +51,7 @@ npm run test:release-manifest
 ```
 
 Packaging tests inspect naming, architecture, version resources, expected
-payloads, archive safety, manifest behavior, and byte identity. The v1.8.16
+payloads, archive safety, manifest behavior, and byte identity. The v1.8.17
 assets are intentionally unsigned; a locally rebuilt artifact is still
 not evidence about the bytes published on GitHub.
 
@@ -64,26 +65,6 @@ npm run test:single-instance
 
 It verifies that a second packaged process forwards to the existing owner and
 does not create a second backend owner.
-
-## Packaged normal single-client qualification
-
-The exact packaged candidate must first pass the ordinary user path with no
-`LEGACY_COMPAT` value and Multi-instance mode disabled:
-
-```powershell
-$env:SUNDAY_LIVE_SINGLECLIENT_QUALIFICATION = '1'
-$env:SUNDAY_TEST_EXE = (Resolve-Path 'dist/Sunday/Sunday.exe').Path
-Remove-Item Env:LEGACY_COMPAT -ErrorAction SilentlyContinue
-npm run test:singleclient-packaged-live
-```
-
-This guarded driver uses the normal local SUNDAY profile because it needs one
-explicitly authorized saved test account. It refuses to start when Roblox is
-already running. It exercises the Accounts-page launch, a public game from the
-main Launch page, Active Clients, focus, restart, and capability-bound stop. It
-writes a sanitized result to
-`artifacts/singleclient-live-qualification-v<VERSION>.json`; it does not include
-account identifiers, session material, launch URIs, PIDs, or capabilities.
 
 ## Legacy compatibility tests
 
@@ -100,14 +81,15 @@ These commands can start Roblox. Run them only with explicit authorization,
 test accounts, and no valuable Roblox process, cookie, or user data in scope.
 They are never part of CI or a normal build.
 
-After the normal packaged gate passes, release qualification must start the
-same exact candidate without `LEGACY_COMPAT`, enable multi-instance mode in
-Settings, complete the controlled restart, and then exercise one and exactly
-three authorized live clients. It must restart one while both siblings remain,
-release and reuse a slot, disable multi-instance mode, and prove normal
-single-client launch still works. The environment-override drivers remain
-backward-compatibility checks; they do not substitute for the Settings-based
-packaged test.
+Release qualification starts the exact candidate without `LEGACY_COMPAT` and
+with a fresh temporary profile. It must prove that a missing preference selects
+the legacy adapter by default without spawning Roblox automatically. With the
+authorized saved-account profile it then exercises one and exactly three live
+clients, focus, stop, restart while siblings remain, slot reuse, teardown, clone
+cleanup, explicit disable/restart to the unavailable adapter, and the exact
+environment override. The environment-override drivers remain
+backward-compatibility checks; they do not substitute for the default
+Settings-based packaged test.
 
 The guarded packaged Settings driver is invoked only for an explicitly
 authorized release qualification:
@@ -124,6 +106,23 @@ It writes a sanitized result to
 session material, and opaque capabilities are not included in that report.
 
 No live Roblox test is implied by a source, CI, packaging, or smoke-test pass.
+
+## Store and package-volume qualification
+
+`test/roblox-discovery.test.js` uses synthetic AppX package/manifest fixtures,
+including the current **Roblox - Windows** display name, missing executable
+declarations, invalid publishers, Studio exclusion, stale registration, and a
+non-default package volume. Fixture coverage proves parsing and selection, not
+real Store compatibility.
+
+The release machine must inspect its registered AppX/MSIX metadata without
+bypassing WindowsApps ACLs or modifying protected content. If the current Store
+app is installed, record its package identity, AUMID/application selection,
+actual registered InstallLocation, and clear legacy-incompatible result without
+exposing the raw user path. If it is absent, report the live Store scenario as
+unqualified and rely only on the automated fixtures for implementation
+coverage. A non-default PackageVolume is likewise unqualified unless directly
+observed. Neither scenario is a VM or publication prerequisite.
 
 ## Migration tests
 

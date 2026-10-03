@@ -69,14 +69,14 @@ async function shutdownBackend(runtime, id) {
   lines.close();
 }
 
-test('effective legacy compatibility remains disabled by default and honors only explicit opt-ins', () => {
+test('effective legacy compatibility defaults on when missing and preserves explicit choices', () => {
   assert.deepEqual(resolveLegacyCompatibility({}, {}), {
-    enabled: false,
+    enabled: true,
     environmentEnabled: false,
     environmentValue: 'ABSENT',
-    settingEnabled: false,
-    activationSource: 'none',
-    selectorEnvironment: {},
+    settingEnabled: true,
+    activationSource: 'settings',
+    selectorEnvironment: { LEGACY_COMPAT: '1' },
   });
   for (const value of ['0', 'true']) {
     const result = resolveLegacyCompatibility({ multiInstanceMode: false }, { LEGACY_COMPAT: value });
@@ -99,11 +99,11 @@ test('actual backend host selects the legacy adapter when LEGACY_COMPAT=1', asyn
       legacyCompatEnabled: true,
       legacyCompatEnvironmentValue: '1',
       legacyCompatEnvironmentEnabled: true,
-      legacyCompatSettingEnabled: false,
+      legacyCompatSettingEnabled: true,
       legacyCompatActivationSource: 'environment',
       selectedAdapter: 'LegacyRobloxIsolationAdapter',
       isolationState: 'LEGACY_COMPAT',
-      reason: "LEGACY MULTI-INSTANCE MODE: Uses SUNDAY Launcher's legacy compatibility mechanism. This is not vendor supported isolation.",
+      reason: "MULTI-INSTANCE MODE: Enabled. Uses SUNDAY's legacy Roblox compatibility path. This is not vendor-supported isolation.",
     });
 
     const status = await request(child, messages, 2, 'app_status');
@@ -122,8 +122,7 @@ test('actual backend host selects the legacy adapter when LEGACY_COMPAT=1', asyn
 test('actual backend startup reads the persisted multi-instance preference and disabling persists', async () => {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sunday-runtime-setting-'));
   store.configure(userData, null, { assertOwner: () => true });
-  assert.equal(store.getSettings().multiInstanceMode, false);
-  assert.equal(store.saveSettings({ multiInstanceMode: true }).multiInstanceMode, true);
+  assert.equal(store.getSettings().multiInstanceMode, true);
   store.close();
 
   let runtime = startBackend(userData);
@@ -150,11 +149,11 @@ test('actual backend startup reads the persisted multi-instance preference and d
     assert.equal(disabled.adapterSelection.legacyCompatEnabled, false);
     assert.equal(disabled.adapterSelection.legacyCompatSettingEnabled, false);
     assert.equal(disabled.adapterSelection.legacyCompatActivationSource, 'none');
-    assert.equal(disabled.adapterSelection.selectedAdapter, 'SingleClientRobloxIsolationAdapter');
-    assert.equal(disabled.adapterSelection.isolationState, 'ACTIVATED');
+    assert.equal(disabled.adapterSelection.selectedAdapter, 'UnavailableRobloxIsolationAdapter');
+    assert.equal(disabled.adapterSelection.isolationState, 'UNAVAILABLE');
     const diagnostics = await request(runtime.child, runtime.messages, 6, 'diag_get');
     const sanitized = diagnostics.diagnostics.sanitizedLaunchDiagnostics;
-    assert.equal(sanitized.adapter.selected, 'SingleClientRobloxIsolationAdapter');
+    assert.equal(sanitized.adapter.selected, 'UnavailableRobloxIsolationAdapter');
     assert.equal(sanitized.adapter.multiInstanceEnabled, false);
     assert.equal(typeof sanitized.roblox.detected, 'boolean');
     const serialized = JSON.stringify(sanitized);

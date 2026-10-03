@@ -1,12 +1,12 @@
 # Troubleshooting
 
-## A normal launch fails
+## A launch fails
 
-Normal mode launches one SUNDAY-owned Roblox client without enabling
-Multi-instance mode. If it fails:
+Multi-instance mode is enabled by default and launches only SUNDAY-owned Roblox
+clients. If a launch fails:
 
 1. Close any unrelated Roblox client; SUNDAY will not adopt it.
-2. Confirm **Roblox detected** on the Launch screen.
+2. Confirm a verified classic Roblox installation is ready on the Launch screen.
 3. Retry once.
 4. Open **Diagnostics** and select **Copy sanitized launch diagnostics**.
 
@@ -14,15 +14,15 @@ The copied report contains mode, Roblox version, process-state booleans,
 failure stage, and a sanitized reason. It excludes cookies, authentication
 tickets, capability values, logs, and personal filesystem paths.
 
-## Enable multiple clients
+## Multi-instance mode is disabled
 
-To launch more than one client:
+To restore managed launches:
 
 1. Open **Settings** and select **Multi-instance**.
 2. Turn on **Enable multi-instance mode** and save.
 3. Restart SUNDAY when prompted.
-4. Confirm **LEGACY MULTI-INSTANCE MODE** appears. Normal single-client launch
-   does not require this setting.
+4. Confirm **MULTI-INSTANCE MODE** and the enabled compatibility description
+   appear.
 
 The exact `LEGACY_COMPAT=1` environment override remains available for
 backward-compatible developer workflows. Values such as `true`, `yes`, and
@@ -39,11 +39,27 @@ If Diagnostics reports that the environment override selected the adapter,
 turning the saved setting off cannot override it. Remove `LEGACY_COMPAT=1` from
 the process that starts SUNDAY and restart.
 
-## Roblox is not detected
+## Roblox is not detected or became stale
 
-Use Settings to select the installed `RobloxPlayerBeta.exe`. Do not copy or
-modify the real installation manually. If a configured location no longer
-exists after a Roblox update, select the current executable again.
+Use **Re-detect** in Settings. SUNDAY rechecks registered Roblox protocols,
+bounded classic installation roots, current running-process evidence, and
+registered AppX/MSIX packages. If detection still fails, select the installed
+classic `RobloxPlayerBeta.exe` manually. Do not copy or modify the installation.
+
+## Microsoft Store Roblox was detected
+
+The Store package is read-only and cannot be used by SUNDAY's legacy clone
+mechanism. Install the standard Windows Roblox client from roblox.com, choose
+**Re-detect**, and select the verified classic installation. Do not change
+WindowsApps permissions or copy package contents.
+
+## Clipboard permission prompt
+
+v1.8.17 no longer reads the clipboard when SUNDAY opens, gains focus, or enters
+Launch. Select **Paste Roblox Link** when you intentionally want to import a
+link. The bounded native Windows read happens only after that click and does
+not require the WebView clipboard-read permission. Invalid text is ignored with
+an explanatory message.
 
 ## Content is not a directory
 
@@ -66,7 +82,7 @@ issue, fixture, or configuration file.
 
 ## Windows SmartScreen shows a warning
 
-The v1.8.16 installer and portable application are intentionally
+The v1.8.17 installer and portable application are intentionally
 unsigned. Download only from the canonical
 [Releases page](https://github.com/SadinKai/SUNDAY/releases) and compare the
 file's SHA-256 hash with the published `SHA256SUMS.txt`. A matching checksum
@@ -74,7 +90,7 @@ confirms byte integrity; it is not a publisher signature.
 
 ## Automatic updates are unavailable
 
-Automatic update installation is not active in v1.8.16. Use **View releases**
+Automatic update installation is not active in v1.8.17. Use **View releases**
 to open the canonical Releases page and download updates manually. SUNDAY does
 not claim that an unavailable updater installed anything.
 

@@ -1,28 +1,24 @@
 # Multi-instance mode
 
-Multi-instance mode lets SUNDAY launch up to three managed Roblox clients by
-using its existing legacy compatibility adapter. It is disabled by default and
-is not an official Roblox feature.
+Multi-instance mode lets SUNDAY launch one to three managed Roblox clients by
+using its existing legacy compatibility adapter. It is enabled by default on a
+fresh installation and is not an official Roblox feature.
 
-Ordinary one-account launch uses SUNDAY's normal single-client adapter and does
-not require Multi-instance mode.
+## First run and existing users
 
-## Enable it
+If the preference has never existed, SUNDAY saves and uses `true`. An existing
+explicit `true` or `false` remains unchanged during upgrade. The Launch screen
+shows **MULTI-INSTANCE MODE** and **Enabled · Uses SUNDAY's legacy Roblox
+compatibility path.** only when that adapter was actually selected.
 
-1. Open **Settings**.
-2. Open **Multi-instance mode**.
-3. Enable **Multi-instance mode**.
-4. Select **Save settings**.
-5. Restart SUNDAY when prompted.
+No environment variable is required. The exact `LEGACY_COMPAT=1` startup
+override remains only for backward-compatible developer workflows.
 
-This Settings flow is the normal v1.8.16 activation path. The exact
-`LEGACY_COMPAT=1` startup override remains available for backward-compatible
-developer workflows.
+## Change it
 
-After restart, the Launch screen shows **LEGACY MULTI-INSTANCE MODE** when the
-legacy adapter was actually selected. Diagnostics shows the selected adapter
-and whether activation came from the saved setting or the backward-compatible
-`LEGACY_COMPAT=1` environment variable.
+Open **Settings**, change **Multi-instance mode**, and save. Adapter selection
+is immutable for the current process, so SUNDAY offers the same visible restart
+prompt for both enabling and disabling. It never restarts without confirmation.
 
 ## Disable it
 
@@ -31,7 +27,21 @@ was activated by the environment, remove `LEGACY_COMPAT=1` from the process
 that starts SUNDAY and restart again. The UI setting cannot silently override
 an explicit startup environment variable.
 
-After restart, normal single-client launch remains available.
+After restart, an explicit saved `false` selects the unavailable planning-only
+adapter. SUNDAY can still prepare plans but will not start Roblox. Re-enable the
+setting and restart to restore managed launches.
+
+## Roblox installation compatibility
+
+SUNDAY automatically verifies classic players discovered from Roblox protocol
+registration, a running-process path used only as evidence, and bounded
+LocalAppData, Program Files, Program Files (x86), and ProgramData version roots.
+You can re-detect or select another verified candidate in Settings.
+
+Microsoft Store / AppX Roblox is detected dynamically from its registered
+package and application metadata. It is not compatible with the legacy clone
+mechanism. SUNDAY never changes WindowsApps ACLs or copies protected package
+files; install classic Roblox from roblox.com to use this mode.
 
 ## Safety boundary
 

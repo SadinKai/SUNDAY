@@ -380,6 +380,83 @@ backend_command!(jobs_list, "jobs_list", (), Value::Null);
 backend_command!(job_get, "job_get", (operation_id: Option<String>), json!({ "operationId": operation_id }));
 backend_command!(job_cancel, "job_cancel", (operation_id: Option<String>), json!({ "operationId": operation_id }));
 
+const MAX_CLIPBOARD_UTF16_UNITS: usize = 16 * 1024;
+
+fn bounded_clipboard_text(units: &[u16]) -> String {
+    let end = units
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(units.len())
+        .min(MAX_CLIPBOARD_UTF16_UNITS);
+    String::from_utf16_lossy(&units[..end])
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\r' | '\n' | '\t'))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_clipboard_text() -> Result<String, String> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    const CF_UNICODETEXT: u32 = 13;
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            // SAFETY: this guard is created only after OpenClipboard succeeds.
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+
+    // SAFETY: the clipboard remains open for the lifetime of ClipboardGuard;
+    // the returned global-memory pointer is read-only, bounded by GlobalSize,
+    // and unlocked before the guard closes the clipboard.
+    unsafe {
+        IsClipboardFormatAvailable(CF_UNICODETEXT)
+            .map_err(|_| "The clipboard does not contain text.".to_string())?;
+        OpenClipboard(None)
+            .map_err(|_| "The clipboard is currently in use by another application.".to_string())?;
+        let _clipboard = ClipboardGuard;
+        let handle = GetClipboardData(CF_UNICODETEXT)
+            .map_err(|_| "Clipboard text could not be read.".to_string())?;
+        let global = HGLOBAL(handle.0);
+        let byte_len = GlobalSize(global);
+        if byte_len < 2 {
+            return Ok(String::new());
+        }
+        let pointer = GlobalLock(global);
+        if pointer.is_null() {
+            return Err("Clipboard text could not be locked for reading.".to_string());
+        }
+        let unit_len = (byte_len / 2).min(MAX_CLIPBOARD_UTF16_UNITS + 1);
+        let units = std::slice::from_raw_parts(pointer.cast::<u16>(), unit_len);
+        let text = bounded_clipboard_text(units);
+        let _ = GlobalUnlock(global);
+        Ok(text)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn read_windows_clipboard_text() -> Result<String, String> {
+    Err("Clipboard reading is available only in the Windows desktop build.".to_string())
+}
+
+/// Reads text only when the renderer invokes this command from an explicit
+/// user action. Clipboard contents are returned directly and are never logged
+/// or forwarded to the Node backend.
+#[tauri::command]
+async fn clipboard_read_text() -> Value {
+    match read_windows_clipboard_text() {
+        Ok(text) => json!({ "ok": true, "text": text }),
+        Err(error) => json!({ "ok": false, "text": "", "error": error }),
+    }
+}
+
 /* ------------------- isolated Roblox webview profile ------------------- */
 
 /// Each authentication window receives a separate WebView2 data directory.
@@ -910,6 +987,7 @@ pub fn run() {
             jobs_list,
             job_get,
             job_cancel,
+            clipboard_read_text,
             launch_quick,
             launch_accounts,
             launch_join,
@@ -967,7 +1045,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{select_backend_user_data_dir, select_node_runtime};
+    use super::{bounded_clipboard_text, select_backend_user_data_dir, select_node_runtime};
     use std::ffi::OsString;
     use std::path::PathBuf;
 
@@ -1008,5 +1086,22 @@ mod tests {
         let current = std::env::current_exe().unwrap();
         let selected = select_node_runtime([current.clone()], false).unwrap();
         assert_eq!(selected, current);
+    }
+
+    #[test]
+    fn clipboard_text_is_bounded_and_strips_untrusted_control_characters() {
+        let units: Vec<u16> = "https://www.roblox.com/games/123\u{0007}\0ignored"
+            .encode_utf16()
+            .collect();
+        assert_eq!(
+            bounded_clipboard_text(&units),
+            "https://www.roblox.com/games/123"
+        );
+
+        let oversized = vec![b'a' as u16; super::MAX_CLIPBOARD_UTF16_UNITS + 500];
+        assert_eq!(
+            bounded_clipboard_text(&oversized).len(),
+            super::MAX_CLIPBOARD_UTF16_UNITS
+        );
     }
 }

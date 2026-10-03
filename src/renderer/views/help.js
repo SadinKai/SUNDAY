@@ -8,11 +8,11 @@ views.help = function () {
       <div class="page-head"><h1>Help</h1><p>Everything you need to use SUNDAY Launcher.</p></div>
 
       <h2>What SUNDAY Launcher does</h2>
-      <p>${legacyMode ? '<b>Legacy multi-instance mode is active.</b> SUNDAY can launch up to three managed clients. This compatibility mode is not supported by Roblox.' : 'SUNDAY connects your saved account, launches one SUNDAY-owned Roblox client normally, and keeps that client visible and controllable.'}</p>
+      <p>${legacyMode ? '<b>Multi-instance mode is active.</b> SUNDAY can launch one to three managed clients through its legacy compatibility path. This mode is not supported by Roblox.' : 'Multi-instance mode is disabled for this process. SUNDAY can prepare launch plans, but Roblox execution remains unavailable until the setting is enabled and SUNDAY restarts.'}</p>
 
       <h2>Quick start</h2>
       <div class="step"><div class="n">1</div><div>On <b>Accounts</b>, click <b>Add account</b>. SUNDAY Launcher opens a Tauri Roblox sign-in window and saves the account after Roblox sets the session.</div></div>
-      <div class="step"><div class="n">2</div><div>Select ${legacyMode ? 'up to three accounts' : 'one account'}, choose a place, person, or exact server, then click <b>Launch</b>.</div></div>
+      <div class="step"><div class="n">2</div><div>Select up to three accounts, choose a place, person, or exact server, then click <b>Launch</b>.</div></div>
       <div class="step"><div class="n">3</div><div>Stay on <b>Launch</b> to follow each active client, its destination, state, and available actions.</div></div>
 
       <h2>Accounts</h2>
@@ -34,7 +34,7 @@ views.help = function () {
       <p>Saved sessions can prepare the same account and target plan in one click. In <b>Settings · Appearance</b>, choose System, Dawn, or Eclipse.</p>
 
       <h2>Runtime modes</h2>
-      <p>${legacyMode ? 'Legacy compatibility mode is active for this SUNDAY process. It can manage up to three clients, but it is not a Roblox-supported feature. Open Diagnostics for implementation details.' : 'Normal single-client mode is active by default. Enable <b>Settings · Multi-instance</b> only when you need more than one client; SUNDAY restarts into the opt-in legacy compatibility adapter.'}</p>
+      <p>${legacyMode ? 'Multi-instance mode is enabled for this SUNDAY process and uses the legacy Roblox compatibility path. Open Diagnostics for implementation details.' : 'Multi-instance mode is disabled. Enable it in <b>Settings · Multi-instance</b>, save, and accept the restart prompt before launching Roblox.'}</p>
 
       <h2>Tools</h2>
       <ul>
@@ -47,7 +47,7 @@ views.help = function () {
       <h2>Troubleshooting</h2>
       <div class="faq">
         <details><summary>“Roblox not found”</summary><div class="a">Install Roblox, or open <b>Settings · Roblox location</b>, switch to <b>Manual path</b> and point SUNDAY Launcher at <code>RobloxPlayerBeta.exe</code>.</div></details>
-        <details><summary>Why did Launch fail?</summary><div class="a">${legacyMode ? 'Legacy mode refuses a launch when Roblox is missing or SUNDAY cannot safely prepare and verify an exact client slot.' : 'Normal mode requires Roblox to be detected, no unrelated Roblox client to be running, and the exact launched process to pass ownership and window-readiness checks. Open Diagnostics and copy the sanitized launch report if retrying does not help.'}</div></details>
+        <details><summary>Why did Launch fail?</summary><div class="a">${legacyMode ? 'Legacy mode refuses a launch when classic Roblox is missing, Store Roblox is selected, or SUNDAY cannot safely prepare and verify an exact client slot.' : 'Roblox execution is disabled for this process. Enable Multi-instance mode and restart, then open Diagnostics and copy the sanitized launch report if retrying does not help.'}</div></details>
         <details><summary>An account shows “Session expired”</summary><div class="a">Roblox sessions expire over time. Click <b>Sign in again</b> on that account to refresh it.</div></details>
         <details><summary>Is my login safe?</summary><div class="a">Existing saved sessions remain local to this PC and are never shown in the UI.</div></details>
       </div>

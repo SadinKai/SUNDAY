@@ -276,6 +276,22 @@
 .settings-sheet .setting:first-child { border-top: 0; }
 .settings-fields { padding: 14px 15px; }
 .settings-fields .field:last-child { margin-bottom: 0; }
+.roblox-detection-summary { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 11px 12px; border: 1px solid var(--hair); border-radius: var(--r); background: var(--surface-2); }
+.roblox-detection-summary > span:nth-child(2) { min-width: 0; display: flex; flex: 1; flex-direction: column; }
+.roblox-detection-summary b { font-size: 12px; }
+.roblox-detection-summary small { margin-top: 2px; color: var(--ink-3); font-size: 11px; line-height: 1.35; }
+.roblox-detection-summary .runtime-dot { display: grid; width: 26px; height: 26px; place-items: center; flex: none; border-radius: 7px; color: var(--ink-3); }
+.roblox-detection-summary.found .runtime-dot { background: var(--success-bg); color: var(--success-text); }
+.roblox-detection-summary.missing .runtime-dot { background: var(--danger-bg); color: var(--danger); }
+.roblox-detection-summary .runtime-dot .ico { width: 15px; height: 15px; }
+.roblox-compat-warning { display: flex; align-items: flex-start; gap: 7px; margin: -1px -15px 14px; color: var(--warning); }
+.roblox-compat-warning .ico { width: 14px; height: 14px; flex: none; margin-top: 1px; }
+.roblox-candidates { display: grid; gap: 7px; margin-bottom: 14px; }
+.roblox-candidate { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--hair); border-radius: var(--r); cursor: pointer; }
+.roblox-candidate.selected, .roblox-candidate:has(input:checked) { border-color: var(--accent-border); background: var(--accent-soft); }
+.roblox-candidate > span { display: flex; min-width: 0; flex-direction: column; }
+.roblox-candidate b { font-size: 11px; }
+.roblox-candidate small { margin-top: 1px; color: var(--ink-3); font-size: 10px; }
 .settings-note { padding: 11px 15px; border-top: 1px solid var(--hair); color: var(--ink-3); font-size: 11px; line-height: 1.45; }
 .settings-note .btn { margin-inline-start: 10px; }
 .settings-advanced { margin-bottom: 26px; border: 1px solid var(--hair); border-radius: var(--r-lg); background: var(--surface); scroll-margin-top: 18px; }
