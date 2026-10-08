@@ -31,6 +31,8 @@ const {
 } = require('./roblox-isolation-adapter');
 const { LaunchCoordinator, LaunchPlanner, LaunchPlanStore } = require('./launch-orchestration');
 const { planServerFill } = require('./server-fill-planner');
+const { MAX_LEGACY_MANAGED_CLIENTS, MAX_LEGACY_PHYSICAL_SLOTS } = require('./legacy-capacity');
+const { LegacyOwnershipStore } = require('./legacy-ownership');
 
 function asInt(v) { const n = parseInt(v, 10); return Number.isNaN(n) ? null : n; }
 
@@ -151,6 +153,7 @@ function makeBackend(ctx) {
   people.configure({ logger });
 
   let monitor = new ProcessMonitor({ intervalMs: settings.pollIntervalMs, logger, capabilities: processCapabilities });
+  const legacyOwnership = new LegacyOwnershipStore({ database: store.database() });
   const isolationReason = gates.get('robloxIsolation').reason;
   const isolationAdapter = selectRobloxIsolationAdapter({
     reason: isolationReason,
@@ -160,6 +163,7 @@ function makeBackend(ctx) {
       logger,
       nativeApi: native,
       processCapabilities,
+      ownershipStore: legacyOwnership,
       ownerId,
       monitor,
       cloneRoot: path.join(userData, 'legacy-instances'),
@@ -237,13 +241,18 @@ function makeBackend(ctx) {
         : (record.gameInstanceId
           ? { type: 'EXACT_SERVER', placeId: record.placeId, serverId: record.gameInstanceId, name: record.name }
           : (record.placeId ? { type: 'PLACE', placeId: record.placeId, name: record.name } : { type: 'HOME', name: record.name }));
-      return launchCoordinator.prepare({
+      const response = await launchCoordinator.prepare({
         name: `Keeper: ${record.name}`,
         participants: [{ accountId: record.accountId, label: record.accountId }],
         target,
         launchDelayMs: 0,
         keepAlive: true,
       });
+      const operation = response && response.plan && response.plan.operations && response.plan.operations[0];
+      if (operation && operation.state === 'RUNNING') {
+        operation.capability = launchCoordinator.capabilityForOperation(operation.operationId);
+      }
+      return response;
     },
   });
   keeper.on('change', (status) => emit('keeper:status', status));
@@ -280,6 +289,20 @@ function makeBackend(ctx) {
     const settings = store.getSettings();
     const loc = roblox.locate(settings);
     const publicLocation = roblox.sanitizeLocation(loc);
+    const capacity = typeof isolationAdapter.capacitySnapshot === 'function'
+      ? isolationAdapter.capacitySnapshot()
+      : {
+        maxConcurrent: MAX_LEGACY_MANAGED_CLIENTS,
+        maxPhysicalSlots: MAX_LEGACY_PHYSICAL_SLOTS,
+        activeManagedClientCount: 0,
+        inFlightLaunchCount: 0,
+        activeOrInFlight: 0,
+        available: MAX_LEGACY_MANAGED_CLIENTS,
+        reusableSlotCount: 0,
+        releasedButBusySlotCount: 0,
+        allocatorDecision: null,
+        capacityReachedReason: '',
+      };
     return {
       ok: true,
       appVersion,
@@ -305,6 +328,7 @@ function makeBackend(ctx) {
         recent: launchCoordinator.list(30).length,
         recovered: launchCoordinator.recovered.length,
       },
+      legacyManagedClients: capacity,
       capabilities: gates.snapshot(),
       slotLeases: {
         state: 'FOUNDATION_ONLY',
@@ -322,7 +346,9 @@ function makeBackend(ctx) {
     const unique = Array.from(new Set((Array.isArray(accountIds) ? accountIds : [])
       .map(value => String(value || '').trim()).filter(Boolean)));
     if (!unique.length) throw new Error('Choose at least one account.');
-    if (unique.length > 3) throw new Error('SUNDAY Launcher launch plans support 1 to 3 accounts.');
+    if (unique.length > MAX_LEGACY_MANAGED_CLIENTS) {
+      throw new Error(`SUNDAY Launcher launch plans support 1 to ${MAX_LEGACY_MANAGED_CLIENTS} accounts.`);
+    }
     const participants = unique.map(accountId => {
       const account = known.get(accountId);
       if (!account) throw new Error('One or more selected accounts no longer exist.');
@@ -452,7 +478,10 @@ function makeBackend(ctx) {
       return Object.assign({ ok: true }, publicLocation);
     },
     async launch_quick(payload) {
-      const count = Math.max(1, Math.min(3, asInt(payload.count) || 1));
+      const count = asInt(payload.count) || 1;
+      if (count < 1 || count > MAX_LEGACY_MANAGED_CLIENTS) {
+        return { ok: false, error: `Choose between 1 and ${MAX_LEGACY_MANAGED_CLIENTS} clients.` };
+      }
       return prepareLaunch({
         name: 'Signed-out launch plan',
         participants: Array.from({ length: count }, (_, index) => ({ accountId: `signed-out-${index + 1}`, label: `Signed out ${index + 1}` })),
@@ -492,14 +521,14 @@ function makeBackend(ctx) {
     },
     async launch_join_person_multi(payload) {
       const targetUserId = asInt(payload.targetUserId);
-      const accountIds = Array.from(new Set((Array.isArray(payload.accountIds) ? payload.accountIds : []).map(id => String(id || '')).filter(Boolean))).slice(0, 3);
+      const accountIds = Array.from(new Set((Array.isArray(payload.accountIds) ? payload.accountIds : []).map(id => String(id || '')).filter(Boolean)));
       if (!targetUserId || !accountIds.length) return { ok: false, error: 'Choose at least one account and a player.' };
       let participants;
       try { participants = participantsFor(accountIds); } catch (error) { return { ok: false, error: error.message }; }
       return prepareLaunch({ name: `Follow person ${targetUserId}`, participants, target: { type: 'FOLLOW_PERSON', targetUserId } });
     },
     async launch_auto_fill(payload) {
-      const accountIds = Array.from(new Set((Array.isArray(payload.accountIds) ? payload.accountIds : []).map(id => String(id || '')).filter(Boolean))).slice(0, 3);
+      const accountIds = Array.from(new Set((Array.isArray(payload.accountIds) ? payload.accountIds : []).map(id => String(id || '')).filter(Boolean)));
       const placeId = String(payload.placeId || '').trim();
       if (!accountIds.length) return { ok: false, error: 'Choose at least one account.' };
       if (!/^\d+$/.test(placeId)) return { ok: false, error: 'A valid place id is required.' };
@@ -531,8 +560,7 @@ function makeBackend(ctx) {
         return { ok: false, error: 'The exact-owned legacy test hook is disabled.' };
       }
       const capability = String(payload.capability || '');
-      const ownedOperation = launchCoordinator.list(200).flatMap(plan => plan.operations.map(operation => ({ plan, operation })))
-        .find(item => item.operation.capability === capability);
+      const ownedOperation = launchCoordinator.findOperationByCapability(capability);
       if (!ownedOperation) return { ok: false, error: 'No SUNDAY Launcher launch operation matches that capability.' };
       const stopped = await isolationAdapter.stop(capability, { environmentId: ownedOperation.operation.environmentId });
       if (!(stopped && stopped.ok && stopped.confirmed)) return { ok: false, error: stopped && stopped.reason || 'Exact owned stop was not confirmed.' };
@@ -553,18 +581,30 @@ function makeBackend(ctx) {
     async people_presence(payload) { return people.presence(payload.userIds); },
     async accounts_list() { return { ok: true, accounts: accounts.list() }; },
     async accounts_add(payload) { return accounts.add(payload || {}); },
-    async accounts_add_cookie(payload) { return accounts.addFromCookie(String((payload && payload.cookie) || '')); },
+    async accounts_add_cookie(payload) {
+      const result = await accounts.addFromCookie(String((payload && payload.cookie) || ''));
+      if (result && result.ok) people.invalidateFriends();
+      return result;
+    },
     async signup_check_username(payload) {
       return signup.checkUsername(String((payload && payload.username) || ''), String((payload && payload.birthday) || ''));
     },
     async signup_suggest_usernames(payload) {
       return signup.suggestUsernames(String((payload && payload.username) || ''), String((payload && payload.birthday) || ''));
     },
-    async accounts_remove(payload) { return accounts.remove(payload.id); },
+    async accounts_remove(payload) {
+      const accountId = String((payload && payload.id) || '');
+      const result = accounts.remove(accountId);
+      if (result && result.ok) {
+        keeper.disarm(accountId, 'account removed');
+        people.invalidateFriends();
+      }
+      return result;
+    },
     async accounts_refresh(payload) { return accounts.refresh(payload.id, payload.full); },
     async accounts_follow(payload) {
       const targetAccountId = String(payload.targetAccountId || '');
-      const followerAccountIds = Array.from(new Set((Array.isArray(payload.followerAccountIds) ? payload.followerAccountIds : []).map(id => String(id || '')).filter(id => id && id !== targetAccountId))).slice(0, 3);
+      const followerAccountIds = Array.from(new Set((Array.isArray(payload.followerAccountIds) ? payload.followerAccountIds : []).map(id => String(id || '')).filter(id => id && id !== targetAccountId)));
       if (!targetAccountId) return { ok: false, error: 'Choose an account to follow.' };
       if (!followerAccountIds.length) return { ok: false, error: 'Choose at least one other account to follow with.' };
       const target = accounts.list().find(account => String(account.id) === targetAccountId);
@@ -578,7 +618,7 @@ function makeBackend(ctx) {
       });
       return Object.assign({}, result, { targetUsername: target.username, targetDisplayName: target.displayName });
     },
-    async games_browse() { return games.browse(); },
+    async games_browse(payload) { return games.browse({ force: !!(payload && payload.force) }); },
     async games_search(payload) { return games.search(payload.query, payload.pageToken); },
     async games_servers(payload) { return games.servers(payload.placeId, payload.cursor); },
     async games_server_scan(payload) { return games.scanServers(payload.placeId, payload.pageLimit); },
@@ -592,8 +632,7 @@ function makeBackend(ctx) {
       const resolved = processCapabilities.authorize(payload.capability, 'kill', ownerId);
       if (!resolved.ok) return { ok: false, error: resolved.reason };
       keeper.onManualKill(payload.capability);
-      const ownedOperation = launchCoordinator.list(200).flatMap(plan => plan.operations.map(operation => ({ plan, operation })))
-        .find(item => item.operation.capability === payload.capability);
+      const ownedOperation = launchCoordinator.findOperationByCapability(payload.capability);
       if (ownedOperation) {
         const stopped = await launchCoordinator.stop(ownedOperation.plan.planId, ownedOperation.operation.operationId);
         monitor.poll();
@@ -611,8 +650,7 @@ function makeBackend(ctx) {
     async instance_restart(payload) {
       const resolved = processCapabilities.authorize(payload.capability, 'restart', ownerId);
       if (!resolved.ok) return { ok: false, error: resolved.reason };
-      const ownedOperation = launchCoordinator.list(200).flatMap(plan => plan.operations.map(operation => ({ plan, operation })))
-        .find(item => item.operation.capability === payload.capability);
+      const ownedOperation = launchCoordinator.findOperationByCapability(payload.capability);
       if (!ownedOperation) return { ok: false, error: 'No active launch operation matches that process capability.' };
       keeper.onManualRestart(payload.capability);
       const restarted = await launchCoordinator.restart(ownedOperation.plan.planId, ownedOperation.operation.operationId);
@@ -685,6 +723,9 @@ function makeBackend(ctx) {
       const loc = roblox.locate(settings);
       const publicLocation = roblox.sanitizeLocation(loc);
       const adapterDiagnostics = typeof isolationAdapter.diagnostics === 'function' ? isolationAdapter.diagnostics() : null;
+      const capacity = typeof isolationAdapter.capacitySnapshot === 'function'
+        ? isolationAdapter.capacitySnapshot()
+        : buildStatus().legacyManagedClients;
       const latestPlan = launchCoordinator.list(1)[0] || null;
       const latestFailure = latestPlan && Array.isArray(latestPlan.operations)
         ? latestPlan.operations.find(operation => operation.state !== 'RUNNING' && operation.reason)
@@ -718,9 +759,10 @@ function makeBackend(ctx) {
           failureStage: latestFailure && latestFailure.failureStage || null,
           reason: latestFailure && latestFailure.reason || latestPlan.reason || null,
           pidAssigned: !!(latestPlan.operations || []).some(operation => Number(operation.pid) > 0),
-          capabilityAssigned: !!(latestPlan.operations || []).some(operation => !!operation.capability),
+          capabilityAssigned: capacity.activeManagedClientCount > 0,
         } : null,
         adapterLastFailure: adapterDiagnostics && adapterDiagnostics.lastFailure || null,
+        capacity,
       };
       return {
         ok: true,
@@ -752,6 +794,7 @@ function makeBackend(ctx) {
           isolationState: adapterSelection.isolationState,
           isolationReason: adapterSelection.reason,
           isolationAdapter: `${adapterSelection.isolationState}: ${adapterSelection.reason}`,
+          legacyManagedCapacity: capacity,
           legacyCompatibility: adapterDiagnostics,
           robloxFound: publicLocation.found,
           robloxVersion: publicLocation.version,

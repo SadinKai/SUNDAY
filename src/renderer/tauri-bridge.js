@@ -120,7 +120,7 @@ window.sunday = {
     suggestUsernames: (username, birthday) => tauriInvoke('signup_suggest_usernames', { username, birthday }),
   },
   games: {
-    browse: () => tauriInvoke('games_browse'),
+    browse: (force) => tauriInvoke('games_browse', { force: force === true }),
     search: (query, pageToken) => tauriInvoke('games_search', { query, pageToken }),
     servers: (placeId, cursor) => tauriInvoke('games_servers', { placeId, cursor }),
     scanServers: (placeId, pageLimit) => invokeWithNumbers('games_server_scan', ['pageLimit'], { placeId, pageLimit }),

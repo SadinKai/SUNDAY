@@ -8,6 +8,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const { StateDatabase } = require('../src/main/state-database');
+const accounts = require('../src/main/accounts');
 const {
   CURRENT_STATE_DATABASE,
   LEGACY_STATE_DATABASE,
@@ -45,6 +46,48 @@ test('pre-SUNDAY durable state is copied, verified, readable, and left recoverab
   migrated.close();
   assert.equal(migrateLegacyUserData(currentRoot, { legacyRoot }).reason, 'already-migrated');
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('v1.8.17 identity migration protects target credentials without mutating the legacy root', () => {
+  const root = temporaryRoot();
+  const legacyRoot = path.join(root, 'previous');
+  const currentRoot = path.join(root, 'current');
+  fs.mkdirSync(legacyRoot);
+  const legacyDatabase = path.join(legacyRoot, LEGACY_STATE_DATABASE);
+  const seed = new StateDatabase({ path: legacyDatabase, assertOwner() {} });
+  seed.close();
+  const plaintext = 'v1.8.17-synthetic-session-material';
+  const legacyAccounts = [{
+    id: 'legacy-account',
+    userId: 9001,
+    username: 'legacy',
+    cookie: `b64:${Buffer.from(plaintext).toString('base64')}`,
+  }];
+  const legacyAccountsPath = path.join(legacyRoot, 'accounts.json');
+  fs.writeFileSync(legacyAccountsPath, JSON.stringify(legacyAccounts));
+
+  const migrated = migrateLegacyUserData(currentRoot, { legacyRoot });
+  assert.equal(migrated.migrated, true);
+  const current = new StateDatabase({
+    path: path.join(currentRoot, CURRENT_STATE_DATABASE),
+    assertOwner() {},
+  });
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString(value) { return Buffer.concat([Buffer.from('protected:'), Buffer.from(value)]); },
+    decryptString(value) { return Buffer.from(value).subarray(Buffer.byteLength('protected:')).toString('utf8'); },
+  };
+  try {
+    accounts.configure({ baseDir: currentRoot, database: current, safeStorage, logger: { info() {}, warn() {}, error() {} } });
+    const stored = current.get('documents', 'accounts.json', []).value;
+    assert.equal(stored.length, 1);
+    assert.match(stored[0].cookie, /^enc:/);
+    assert.equal(fs.existsSync(path.join(currentRoot, 'accounts.json')), false);
+    assert.equal(fs.readFileSync(legacyAccountsPath, 'utf8'), JSON.stringify(legacyAccounts));
+  } finally {
+    current.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('identity migration never overwrites current state and refuses active SQLite sidecars', () => {

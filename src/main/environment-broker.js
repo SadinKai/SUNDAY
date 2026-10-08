@@ -136,9 +136,9 @@ class EnvironmentBroker {
     if (!record || !sameDigest(record.capabilityDigest, tokenDigest(capability))) {
       throw brokerError('EBROKERCAPABILITY', 'Environment capability is unknown.');
     }
-    if (record.disposed) {
+    if (record.disposed || record.cleanupPromise) {
       if (allowDisposed) return record;
-      throw brokerError('EBROKERDISPOSED', 'Environment capability refers to a revoked and destroyed environment.');
+      throw brokerError('EBROKERDISPOSED', 'Environment capability refers to an environment being revoked or already destroyed.');
     }
     this.leases.authorize(record.leaseId, record.leaseToken, {
       environmentId: record.environment.environmentId,
@@ -184,11 +184,15 @@ class EnvironmentBroker {
         ttlMs: 15_000,
       }), options && options.signal, 'Guest launch command was cancelled or timed out.');
     } catch (error) {
-      try { this.leases.revoke(environmentRecord.leaseId, environmentRecord.leaseToken, error.message); } catch (_) {}
-      try {
-        const destroyed = await this.provider.destroy({ environment: environmentRecord.environment, leaseId: environmentRecord.leaseId });
-        environmentRecord.disposed = !!(destroyed && destroyed.ok && destroyed.destroyed);
-      } catch (_) { environmentRecord.disposed = false; }
+      environmentRecord.cleanupPromise = (async () => {
+        try { this.leases.revoke(environmentRecord.leaseId, environmentRecord.leaseToken, error.message); } catch (_) {}
+        try {
+          const destroyed = await this.provider.destroy({ environment: environmentRecord.environment, leaseId: environmentRecord.leaseId });
+          environmentRecord.disposed = !!(destroyed && destroyed.ok && destroyed.destroyed);
+        } catch (_) { environmentRecord.disposed = false; }
+        return environmentRecord.disposed;
+      })();
+      await environmentRecord.cleanupPromise;
       throw error;
     }
     if (!response || !response.ok || response.status !== 'RUNNING' || !response.processCapability) return response;
@@ -271,9 +275,13 @@ class EnvironmentBroker {
 
   async release(environmentCapability) {
     const record = this._environment(environmentCapability, true);
+    if (record.cleanupPromise) await record.cleanupPromise;
     if (record.disposed) {
       this.environments.delete(environmentCapability);
       return { ok: true, state: PROVIDER_STATES.ACTIVATED, released: true, destroyed: true };
+    }
+    if (record.cleanupPromise) {
+      return { ok: false, state: PROVIDER_STATES.FAILED, released: false, reason: 'Broker-owned environment cleanup was not confirmed.' };
     }
     if (record.processCapabilities.size) {
       return { ok: false, state: PROVIDER_STATES.FAILED, released: false, reason: 'Environment still owns a process capability.' };

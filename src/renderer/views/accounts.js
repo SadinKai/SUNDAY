@@ -50,6 +50,7 @@ function renderAccountCard(a) {
   const followTip = allAccounts.length < 2 ? 'Add a second account to use Follow'
     : (canFollow ? 'Choose other accounts to join this exact server' : 'This account must be in a game');
   const id = safeAttr(a.id);
+  const alreadyActive = activeManagedAccountIds().has(String(a.id));
   const facts = accountFactsHtml(a);
   return `
     <div class="acct ${state.selected.has(a.id) ? 'selected' : ''}" data-id="${id}">
@@ -59,7 +60,7 @@ function renderAccountCard(a) {
           <div class="dname" data-acct-dname="${id}">${esc(a.displayName || a.username)}${a.verified ? ` <span class="vbadge" data-tip="Verified account">${icon('check-circle')}</span>` : ''}</div>
           <div class="uname">@${esc(a.username)}</div>
         </div>
-        <button type="button" class="check" data-action="toggle-account" data-id="${id}" data-tip="Select for a launch plan" aria-label="Select ${esc(a.displayName || a.username)} for a launch plan" aria-pressed="${state.selected.has(a.id)}">${icon('check')}</button>
+        <button type="button" class="check" data-action="toggle-account" data-id="${id}" data-tip="${alreadyActive ? 'This account already has an active client' : 'Select for a launch plan'}" aria-label="Select ${esc(a.displayName || a.username)} for a launch plan" aria-pressed="${state.selected.has(a.id)}" ${alreadyActive ? 'disabled aria-disabled="true"' : ''}>${icon('check')}</button>
       </div>
       <div class="acct-meta">
         <div class="row-split">
@@ -72,7 +73,7 @@ function renderAccountCard(a) {
       <div class="acct-actions">
         ${expired
           ? `<button class="btn primary sm" data-action="reauth-account" data-id="${id}">${icon('user-plus')} Sign in again</button>`
-          : `<button class="btn primary sm" data-action="launch-account" data-id="${id}">${icon('play')} Launch</button>`}
+          : `<button class="btn primary sm" data-action="launch-account" data-id="${id}" ${alreadyActive ? 'disabled aria-disabled="true"' : ''}>${icon('play')} ${alreadyActive ? 'Active client' : 'Launch'}</button>`}
         <button class="btn sm" data-action="follow-account" data-id="${id}" data-tip="${esc(followTip)}" ${canFollow ? '' : 'disabled'}>${icon('users-group')} Follow</button>
         <button class="btn sm icon" data-action="refresh-account" data-id="${id}" data-tip="Refresh status">${icon('refresh')}</button>
         <button class="btn sm icon danger" data-action="remove-account" data-id="${id}" data-tip="Remove account">${icon('trash')}</button>

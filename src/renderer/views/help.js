@@ -8,11 +8,11 @@ views.help = function () {
       <div class="page-head"><h1>Help</h1><p>Everything you need to use SUNDAY Launcher.</p></div>
 
       <h2>What SUNDAY Launcher does</h2>
-      <p>${legacyMode ? '<b>Multi-instance mode is active.</b> SUNDAY can launch one to three managed clients through its legacy compatibility path. This mode is not supported by Roblox.' : 'Multi-instance mode is disabled for this process. SUNDAY can prepare launch plans, but Roblox execution remains unavailable until the setting is enabled and SUNDAY restarts.'}</p>
+      <p>${legacyMode ? `<b>Multi-instance mode is active.</b> SUNDAY can launch up to ${legacyManagedClientLimit()} managed clients through its legacy compatibility path. This mode is not supported by Roblox.` : 'Multi-instance mode is disabled for this process. SUNDAY can prepare launch plans, but Roblox execution remains unavailable until the setting is enabled and SUNDAY restarts.'}</p>
 
       <h2>Quick start</h2>
       <div class="step"><div class="n">1</div><div>On <b>Accounts</b>, click <b>Add account</b>. SUNDAY Launcher opens a Tauri Roblox sign-in window and saves the account after Roblox sets the session.</div></div>
-      <div class="step"><div class="n">2</div><div>Select up to three accounts, choose a place, person, or exact server, then click <b>Launch</b>.</div></div>
+      <div class="step"><div class="n">2</div><div>Select up to ${legacyManagedClientLimit()} accounts, choose a place, person, or exact server, then click <b>Launch</b>. Completed launches clear the roster so you can add another account without relaunching active clients.</div></div>
       <div class="step"><div class="n">3</div><div>Stay on <b>Launch</b> to follow each active client, its destination, state, and available actions.</div></div>
 
       <h2>Accounts</h2>

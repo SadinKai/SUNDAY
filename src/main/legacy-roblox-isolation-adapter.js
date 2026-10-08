@@ -19,6 +19,10 @@ const {
   RobloxIsolationAdapter,
   result,
 } = require('./roblox-isolation-adapter');
+const {
+  MAX_LEGACY_MANAGED_CLIENTS,
+  MAX_LEGACY_PHYSICAL_SLOTS,
+} = require('./legacy-capacity');
 
 const LEGACY_REASON = "Uses SUNDAY Launcher's legacy compatibility mechanism. This is not vendor supported isolation.";
 const PLAYER_EXE = 'RobloxPlayerBeta.exe';
@@ -172,10 +176,12 @@ class LegacyCloneManager {
     this.root = path.resolve(opts.root);
     this.logger = opts.logger || { info() {}, warn() {} };
     this.forensic = typeof opts.forensic === 'function' ? opts.forensic : () => {};
-    this.maxConcurrentSlots = 3;
-    this.maxPhysicalSlots = Math.max(this.maxConcurrentSlots + 1, Number(opts.maxPhysicalSlots) || 4);
+    this.maxConcurrentSlots = MAX_LEGACY_MANAGED_CLIENTS;
+    this.maxPhysicalSlots = Math.max(this.maxConcurrentSlots, Number(opts.maxPhysicalSlots) || MAX_LEGACY_PHYSICAL_SLOTS);
     this.reserved = new Set();
     this.slotStates = new Map();
+    this.lastAllocationDecision = null;
+    this.capacityReachedReason = '';
     this.reclaimProbe = typeof opts.reclaimProbe === 'function'
       ? opts.reclaimProbe
       : executablePath => {
@@ -205,6 +211,54 @@ class LegacyCloneManager {
   slotStateSnapshot() {
     return Array.from(this.slotStates.values())
       .sort((a, b) => Number(a.instanceId.split('-')[1]) - Number(b.instanceId.split('-')[1]));
+  }
+
+  _slotIds() {
+    return Array.from({ length: this.maxPhysicalSlots }, (_, index) => `instance-${index + 1}`);
+  }
+
+  _slotNumber(slotId) {
+    const match = /^instance-([1-9]\d*)$/.exec(String(slotId || ''));
+    return match ? Number(match[1]) : 0;
+  }
+
+  slotOwnsExecutable(slotId, executablePath) {
+    const slotNumber = this._slotNumber(slotId);
+    if (!slotNumber || slotNumber > this.maxPhysicalSlots) return false;
+    return this._slotInUse(this._slotPath(slotId), [{ executablePath }]);
+  }
+
+  reserveRestored(slotId, evidence) {
+    const slotNumber = this._slotNumber(slotId);
+    if (!slotNumber || slotNumber > this.maxPhysicalSlots || !present(this._slotPath(slotId))) return false;
+    if (!this.reserved.has(slotId) && this.reserved.size >= this.maxConcurrentSlots) return false;
+    this.reserved.add(slotId);
+    this.markOccupied(slotId, evidence);
+    return true;
+  }
+
+  capacitySnapshot() {
+    const slotIds = this._slotIds();
+    const releasedButBusy = slotIds.filter(slotId => {
+      const state = this.slotStates.get(slotId);
+      return state && state.state === SLOT_STATES.RELEASABLE_BUT_BUSY;
+    }).length;
+    const reusable = slotIds.filter(slotId => {
+      if (this.reserved.has(slotId)) return false;
+      if (!present(this._slotPath(slotId))) return true;
+      const state = this.slotStates.get(slotId);
+      return !!state && state.state === SLOT_STATES.FREE;
+    }).length;
+    return {
+      maxConcurrent: this.maxConcurrentSlots,
+      maxPhysicalSlots: this.maxPhysicalSlots,
+      activeOrInFlight: this.reserved.size,
+      available: Math.max(0, this.maxConcurrentSlots - this.reserved.size),
+      reusableSlotCount: reusable,
+      releasedButBusySlotCount: releasedButBusy,
+      allocatorDecision: this.lastAllocationDecision,
+      capacityReachedReason: this.capacityReachedReason,
+    };
   }
 
   markOccupied(slotId, evidence) {
@@ -583,8 +637,7 @@ class LegacyCloneManager {
   sweep(liveRows, ownedSlots) {
     this._refreshOwnedStates(ownedSlots);
     const results = [];
-    for (let index = 1; index <= this.maxPhysicalSlots; index += 1) {
-      const slotId = `instance-${index}`;
+    for (const slotId of this._slotIds()) {
       if (this.reserved.has(slotId)) continue;
       results.push(this.reclaim(slotId, liveRows, ownedSlots));
     }
@@ -602,8 +655,10 @@ class LegacyCloneManager {
     });
     this._refreshOwnedStates(ownedSlots);
     if (this.reserved.size >= this.maxConcurrentSlots) {
-      throw new Error('SUNDAY Launcher legacy compatibility already has three active or in-flight client slots.');
+      this.capacityReachedReason = `SUNDAY Launcher legacy compatibility already has ${this.maxConcurrentSlots} active or in-flight managed clients.`;
+      throw new Error(this.capacityReachedReason);
     }
+    this.capacityReachedReason = '';
     // All top-level files are hard links. A client running from one slot can
     // therefore make the write-lock probe fail through every stale slot name.
     // Reclaim stale, unreserved slots before the first live launch, while the
@@ -611,9 +666,11 @@ class LegacyCloneManager {
     if (Array.isArray(liveRows) && liveRows.length === 0 && this.reserved.size === 0) {
       this.sweep(liveRows, ownedSlots);
     }
-    for (let index = 1; index <= this.maxPhysicalSlots; index += 1) {
-      const slotId = `instance-${index}`;
+    // Deterministic ascending allocation: the lowest-numbered slot that is
+    // proven reusable (including an absent directory) always wins.
+    for (const slotId of this._slotIds()) {
       if (this.reserved.has(slotId)) {
+        this.lastAllocationDecision = { slotId, decision: 'SKIP_RESERVED' };
         this.forensic('clone_slot_decision', {
           trace,
           slotId,
@@ -624,6 +681,10 @@ class LegacyCloneManager {
       }
       const reclaim = this.reclaim(slotId, liveRows, ownedSlots);
       if (!reclaim.reusable) {
+        this.lastAllocationDecision = {
+          slotId,
+          decision: reclaim.state === SLOT_STATES.OCCUPIED ? 'SKIP_OCCUPIED' : 'SKIP_RELEASED_BUT_BUSY',
+        };
         this.forensic('clone_slot_decision', {
           trace,
           slotId,
@@ -632,6 +693,7 @@ class LegacyCloneManager {
         });
         continue;
       }
+      this.lastAllocationDecision = { slotId, decision: 'ALLOCATED' };
       this.forensic('clone_slot_decision', { trace, slotId, decision: 'BUILD', slotState: reclaim });
       const built = this._build(slotId, versionDirectory, trace);
       this.reserved.add(slotId);
@@ -643,7 +705,8 @@ class LegacyCloneManager {
       });
       return built;
     }
-    throw new Error('No safe legacy compatibility slot is available; active slots remain owned and released slots remain busy.');
+    this.capacityReachedReason = `No safe legacy compatibility slot is available within the ${this.maxPhysicalSlots}-slot safety ceiling; active slots remain owned or released slots remain busy.`;
+    throw new Error(this.capacityReachedReason);
   }
 
   release(slotId, liveRows, ownedSlots) {
@@ -677,6 +740,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     this.native = opts.nativeApi || require('./native');
     this.legacyNative = opts.legacyNativeApi || require('./legacy-roblox-native');
     this.processCapabilities = opts.processCapabilities;
+    this.ownershipStore = opts.ownershipStore || null;
     this.ownerId = String(opts.ownerId || '');
     this.monitor = opts.monitor || null;
     this.locateRoblox = opts.locateRoblox || (() => ({ found: false }));
@@ -708,6 +772,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     this.closedHandles = 0;
     this.crossProcessActions = [];
     this.lastFailure = null;
+    this.restored = [];
     this._forensic('adapter_started', {
       pid: process.pid,
       cwd: process.cwd(),
@@ -715,6 +780,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
       source: process.execPath,
     });
     this._recordStartupProcesses();
+    this._restorePersistedOwnership();
   }
 
   _forensic(event, payload) {
@@ -735,8 +801,19 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
   _rows() {
     try {
       const rows = this.native.listProcesses(PLAYER_EXE);
-      return Array.isArray(rows) ? rows : [];
-    } catch (_) { return []; }
+      if (!Array.isArray(rows)) throw new Error('Windows process enumeration did not return a snapshot.');
+      this.processObservationFailure = null;
+      return rows;
+    } catch (error) {
+      const failure = new Error(`Roblox process observation is unavailable: ${error && error.message || 'unknown error'}`);
+      failure.code = 'EPROCESSOBSERVATION';
+      this.processObservationFailure = Object.freeze({
+        at: new Date().toISOString(),
+        code: failure.code,
+        reason: failure.message,
+      });
+      throw failure;
+    }
   }
 
   _ownedSlotEvidence(liveRows) {
@@ -773,12 +850,154 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
   }
 
   _recordStartupProcesses() {
-    for (const row of this._rows()) this.externalAtStartup.set(this._identity(row), Object.freeze({
+    let rows;
+    try { rows = this._rows(); }
+    catch (error) {
+      this.logger.warn('Startup Roblox process observation failed: ' + error.message);
+      return;
+    }
+    for (const row of rows) this.externalAtStartup.set(this._identity(row), Object.freeze({
       pid: Number(row.pid),
       processIdentity: String(row.processIdentity || ''),
       executablePath: String(row.executablePath || ''),
       ownership: 'EXTERNAL',
     }));
+  }
+
+  _deleteOwnership(operationId) {
+    if (!this.ownershipStore || !operationId) return;
+    try { this.ownershipStore.delete(operationId); }
+    catch (error) { this.logger.warn('Legacy ownership evidence could not be removed: ' + error.message); }
+  }
+
+  _persistOwnership(environment, profileName) {
+    if (!this.ownershipStore) return null;
+    const authorized = this.processCapabilities.authorize(environment.capability, 'observe', this.ownerId);
+    if (!authorized.ok || !authorized.record.fileIdentity) {
+      throw new Error('Exact process file identity is unavailable.');
+    }
+    const record = this.ownershipStore.put({
+      operationId: environment.operationId,
+      accountId: environment.accountId,
+      profileName,
+      environmentId: environment.environmentId,
+      instanceId: environment.instanceId,
+      slotId: environment.slotId,
+      pid: environment.pid,
+      processIdentity: environment.processIdentity,
+      executablePath: environment.executablePath,
+      fileIdentity: authorized.record.fileIdentity,
+      sourcePlayerPath: environment.sourcePlayerPath,
+      startedAt: environment.startedAt,
+    });
+    environment.fileIdentity = record.fileIdentity;
+    return record;
+  }
+
+  _restorePersistedOwnership() {
+    if (!this.ownershipStore) return;
+    let records;
+    try { records = this.ownershipStore.list(); }
+    catch (error) {
+      this.logger.warn('Legacy ownership evidence could not be read: ' + error.message);
+      return;
+    }
+    let rows;
+    try { rows = this._rows(); }
+    catch (error) {
+      this.logger.warn('Persisted Roblox ownership restoration was deferred: ' + error.message);
+      return;
+    }
+    for (const record of records) {
+      const operationId = String(record && record.operationId || '');
+      try {
+        const row = rows.find(item => Number(item.pid) === Number(record.pid));
+        if (!row) {
+          this._deleteOwnership(operationId);
+          continue;
+        }
+        const fingerprint = this.native.processFingerprintOf(Number(record.pid)) || {};
+        const exact = operationId
+          && String(record.processIdentity || '') === String(row.processIdentity || '')
+          && String(record.processIdentity || '') === String(fingerprint.processIdentity || '')
+          && normalize(record.executablePath) === normalize(row.executablePath)
+          && normalize(record.executablePath) === normalize(fingerprint.executablePath)
+          && String(record.fileIdentity || '')
+          && String(record.fileIdentity) === String(fingerprint.fileIdentity || '')
+          && String(record.slotId || '') === String(record.instanceId || '')
+          && this.cloneManager.slotOwnsExecutable(record.slotId, row.executablePath);
+        if (!exact) {
+          this._deleteOwnership(operationId);
+          continue;
+        }
+        const capability = this.processCapabilities.issue(Number(record.pid), {
+          executablePath: row.executablePath,
+          ownerId: this.ownerId,
+          instanceId: record.instanceId,
+          accountId: record.accountId,
+          profileName: record.profileName,
+          slotId: record.slotId,
+        });
+        const environment = {
+          environmentId: String(record.environmentId),
+          slotId: String(record.slotId),
+          executablePath: String(row.executablePath),
+          launchExecutablePath: String(row.executablePath),
+          sourcePlayerPath: String(record.sourcePlayerPath || ''),
+          operationId,
+          accountId: String(record.accountId || ''),
+          instanceId: String(record.instanceId),
+          state: 'RUNNING',
+          pid: Number(record.pid),
+          processIdentity: String(record.processIdentity),
+          fileIdentity: String(record.fileIdentity),
+          capability,
+          startedAt: String(record.startedAt || new Date().toISOString()),
+          trace: null,
+        };
+        if (!this.cloneManager.reserveRestored(environment.slotId, {
+          operationId,
+          instanceId: environment.instanceId,
+          pid: environment.pid,
+          processIdentity: environment.processIdentity,
+          executablePath: environment.executablePath,
+        })) {
+          this.processCapabilities.revoke(capability, 'Persisted slot could not be safely restored.');
+          this._deleteOwnership(operationId);
+          continue;
+        }
+        this.environments.set(environment.environmentId, environment);
+        this.capabilityToEnvironment.set(capability, environment.environmentId);
+        this.externalAtStartup.delete(this._identity(row));
+        if (this.monitor) this.monitor.markManaged(environment.pid, {
+          profileName: String(record.profileName || record.accountId || record.instanceId),
+          mode: 'restored',
+          playerPath: environment.sourcePlayerPath,
+          exePath: environment.executablePath,
+          accountId: environment.accountId,
+          capability,
+          instanceId: environment.instanceId,
+          operationId,
+          processIdentity: environment.processIdentity,
+          launchedAt: environment.startedAt,
+        });
+        this.restored.push(Object.freeze({
+          operationId,
+          accountId: environment.accountId,
+          environmentId: environment.environmentId,
+          instanceId: environment.instanceId,
+          pid: environment.pid,
+          capability,
+        }));
+      } catch (error) {
+        this.logger.warn(`Legacy ownership evidence for ${operationId || 'unknown operation'} was not restored: ${error.message}`);
+        this._deleteOwnership(operationId);
+      }
+    }
+  }
+
+  restoredOwnership() {
+    return this.restored.map(item => Object.assign({}, item));
   }
 
   _managedIdentitySet() {
@@ -810,6 +1029,13 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     this.logger.warn(`${action.label}: ${reason}; external PIDs ${action.processes.map(item => item.pid).join(', ')}.`);
   }
 
+  _singletonGuardReady() {
+    if (typeof this.legacyNative.singletonGuardReady === 'function') {
+      return !!this.legacyNative.singletonGuardReady();
+    }
+    return !!this.legacyNative.singletonNamesOwned();
+  }
+
   async _guardTick(forceContested) {
     if (this.guardBusy) return;
     this.guardBusy = true;
@@ -835,7 +1061,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
       if (due.length) this._stripRows(due, managed, 'timed singleton compatibility pass');
       if (!hold.ok && rows.length && (forceContested || now - this.lastContestedSweep >= 1500)) {
         this.lastContestedSweep = now;
-        this._stripRows(rows, managed, 'singleton ownership was contested');
+        this._stripRows(rows, managed, 'singleton event reservation was contested');
         this.legacyNative.acquireSingletonNames();
       }
     } finally {
@@ -849,7 +1075,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     const outcome = this.legacyNative.closeGlobalSingletonHandles(rows.map(row => row.pid));
     if (outcome && outcome.closed) {
       this.closedHandles += outcome.closed;
-      this.logger.info(`LEGACY COMPATIBILITY: closed ${outcome.closed} exact Roblox global singleton handle(s).`);
+      this.logger.info(`LEGACY COMPATIBILITY: closed ${outcome.closed} exact Roblox singleton event handle(s).`);
     }
   }
 
@@ -862,7 +1088,60 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     if (this.guardTimer.unref) this.guardTimer.unref();
   }
 
-  async preflight() {
+  capacitySnapshot() {
+    const allocator = typeof this.cloneManager.capacitySnapshot === 'function'
+      ? this.cloneManager.capacitySnapshot()
+      : {
+        maxConcurrent: MAX_LEGACY_MANAGED_CLIENTS,
+        maxPhysicalSlots: MAX_LEGACY_PHYSICAL_SLOTS,
+        activeOrInFlight: Array.from(this.environments.values())
+          .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING'].includes(environment.state)).length,
+        reusableSlotCount: 0,
+        releasedButBusySlotCount: 0,
+        allocatorDecision: null,
+        capacityReachedReason: '',
+      };
+    const activeManagedClientCount = Array.from(this.environments.values())
+      .filter(environment => environment.state === 'RUNNING').length;
+    const inFlightLaunchCount = Array.from(this.environments.values())
+      .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING'].includes(environment.state)).length;
+    return Object.assign({}, allocator, {
+      activeManagedClientCount,
+      inFlightLaunchCount,
+      activeOrInFlight: activeManagedClientCount + inFlightLaunchCount,
+      available: Math.max(0, allocator.maxConcurrent - activeManagedClientCount - inFlightLaunchCount),
+    });
+  }
+
+  async preflight(context) {
+    try {
+      this._reclaimExitedEnvironments();
+      this._rows();
+    } catch (error) {
+      return result(ISOLATION_STATES.UNAVAILABLE, error.message, {
+        failureCode: 'PROCESS_OBSERVATION_UNAVAILABLE', failureStage: 'preflight',
+      });
+    }
+    const plan = context && context.plan;
+    const requested = plan && Array.isArray(plan.operations) ? plan.operations : [];
+    const capacity = this.capacitySnapshot();
+    if (requested.length > capacity.available) {
+      const reason = `Legacy managed-client capacity reached: ${capacity.activeManagedClientCount} active, ${capacity.inFlightLaunchCount} in flight, ${requested.length} requested, ${capacity.maxConcurrent} maximum.`;
+      this.cloneManager.capacityReachedReason = reason;
+      return result(ISOLATION_STATES.UNAVAILABLE, reason, {
+        failureCode: 'CAPACITY_REACHED', failureStage: 'preflight', capacity,
+      });
+    }
+    const activeAccounts = new Set(Array.from(this.environments.values())
+      .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING'].includes(environment.state))
+      .map(environment => environment.accountId)
+      .filter(accountId => accountId && !String(accountId).startsWith('signed-out-')));
+    const duplicate = requested.find(operation => activeAccounts.has(String(operation.accountId || '')));
+    if (duplicate) {
+      return result(ISOLATION_STATES.UNAVAILABLE, `Account ${duplicate.label || duplicate.accountId} already has an active or in-flight SUNDAY-managed client.`, {
+        failureCode: 'DUPLICATE_ACCOUNT_OPERATION', failureStage: 'preflight', capacity,
+      });
+    }
     if (process.platform !== 'win32') return result(ISOLATION_STATES.UNAVAILABLE, 'Legacy compatibility is Windows-only.');
     if (!this.native.isAvailable() || !this.legacyNative.isAvailable()) {
       return result(ISOLATION_STATES.UNAVAILABLE, this.legacyNative.getLoadError() || this.native.getLoadError() || 'Required Win32 bindings are unavailable.');
@@ -876,12 +1155,12 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     }
     this._startGuard();
     const deadline = Date.now() + 7000;
-    while (!this.legacyNative.singletonNamesOwned() && Date.now() < deadline) {
+    while (!this._singletonGuardReady() && Date.now() < deadline) {
       await this._guardTick(true);
-      if (!this.legacyNative.singletonNamesOwned()) await delay(100);
+      if (!this._singletonGuardReady()) await delay(100);
     }
-    if (!this.legacyNative.singletonNamesOwned()) {
-      return result(ISOLATION_STATES.UNAVAILABLE, 'Legacy compatibility could not own the Roblox singleton names; no client was launched.');
+    if (!this._singletonGuardReady()) {
+      return result(ISOLATION_STATES.UNAVAILABLE, 'Legacy compatibility could not reserve the Roblox singleton event; no client was launched.');
     }
     return result(ISOLATION_STATES.LEGACY_COMPAT, LEGACY_REASON, { mode: 'LEGACY_COMPAT', qualified: false });
   }
@@ -897,7 +1176,23 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
   }
 
   async allocateInstance(operation) {
-    this._reclaimExitedEnvironments();
+    try { this._reclaimExitedEnvironments(); }
+    catch (error) {
+      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, {
+        ok: false, failureCode: 'PROCESS_OBSERVATION_UNAVAILABLE', failureStage: 'allocation',
+      });
+    }
+    const accountId = String(operation && operation.accountId || '');
+    if (accountId && !accountId.startsWith('signed-out-')) {
+      const duplicate = Array.from(this.environments.values()).some(environment =>
+        ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING'].includes(environment.state)
+        && environment.accountId === accountId);
+      if (duplicate) {
+        return result(ISOLATION_STATES.LEGACY_COMPAT, 'That account already has an active or in-flight SUNDAY-managed client.', {
+          ok: false, failureCode: 'DUPLICATE_ACCOUNT_OPERATION', failureStage: 'allocation',
+        });
+      }
+    }
     const located = this.locateRoblox();
     if (located && located.found && located.legacyCompatible === false) {
       return result(ISOLATION_STATES.UNAVAILABLE, located.compatibilityReason || 'This Roblox installation is not compatible with legacy multi-instance mode.');
@@ -941,6 +1236,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         sourcePlayerPath: located.playerPath,
         operationId: String(operation && operation.operationId || ''),
         accountId: String(operation && operation.accountId || ''),
+        targetType: String(operation && operation.target && operation.target.type || ''),
         instanceId: slot.slotId,
         state: 'ALLOCATED',
         pid: null,
@@ -1107,6 +1403,30 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     environment.state = 'RUNNING';
     this.lastFailure = null;
     environment.startedAt = new Date().toISOString();
+    try { this._persistOwnership(environment, String(intent.profileName || environment.accountId || environment.instanceId)); }
+    catch (error) {
+      const authorized = this.processCapabilities.authorize(capability, 'stop', this.ownerId);
+      const terminated = authorized.ok ? this.native.terminateOwned(authorized.record) : null;
+      const exitConfirmed = !!(terminated && terminated.ok && terminated.confirmed
+        && await this._waitForExit(environment, 7000));
+      if (exitConfirmed) {
+        this.processCapabilities.revoke(capability, 'Durable ownership evidence could not be recorded; exact launch was rolled back.');
+        this._deleteOwnership(environment.operationId);
+        environment.capability = null;
+        environment.pid = null;
+        environment.processIdentity = '';
+        environment.state = 'FAILED';
+        if (typeof this.cloneManager.markReleased === 'function') {
+          this.cloneManager.markReleased(environment.slotId, {
+            reclamation: 'PENDING',
+            reason: 'Durable ownership persistence failed and exact process rollback was confirmed.',
+          });
+        }
+        throw new Error(`Durable legacy ownership evidence could not be recorded; exact process rollback was confirmed: ${error.message}`);
+      }
+      environment.state = 'UNKNOWN';
+      throw new Error(`Durable legacy ownership evidence could not be recorded and exact process rollback was not confirmed: ${error.message}`);
+    }
     this._forensic('launch_marked_running', {
       trace: environment.trace,
       spawnPid: environment.spawnPid,
@@ -1153,22 +1473,48 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     if (environment.state !== 'ALLOCATED') return result(ISOLATION_STATES.LEGACY_COMPAT, 'Legacy environment is not launchable.', { ok: false });
     try { return await this._launchInEnvironment(rawIntent, environment, context); }
     catch (error) {
-      environment.state = 'FAILED';
       this.lastFailure = Object.freeze(Object.assign({ at: new Date().toISOString() }, sanitizedLegacyFailure(error.message, 'launch')));
       let cleanup = null;
-      if (environment.spawnPid && environment.spawnFingerprint
+      let cleanupConfirmed = environment.state === 'FAILED' && !environment.pid && !environment.capability && !!environment.spawnPid;
+      if (!cleanupConfirmed && environment.spawnPid && environment.spawnFingerprint
           && environment.spawnFingerprint.processIdentity
           && environment.spawnFingerprint.executablePath) {
         cleanup = this.native.terminateOwned(Object.assign({ pid: environment.spawnPid }, environment.spawnFingerprint));
+      }
+      cleanupConfirmed = cleanupConfirmed || !!(cleanup && cleanup.ok && cleanup.confirmed
+        && await this._waitForExit(
+          environment,
+          7000,
+          environment.spawnPid,
+          environment.spawnFingerprint && environment.spawnFingerprint.processIdentity,
+        ));
+      if (cleanupConfirmed) {
+        if (environment.capability) {
+          this.processCapabilities.revoke(environment.capability, 'Failed launch rollback was confirmed.');
+          this.capabilityToEnvironment.delete(environment.capability);
+        }
+        this._deleteOwnership(environment.operationId);
+        environment.capability = null;
+        environment.pid = null;
+        environment.processIdentity = '';
+        environment.state = 'FAILED';
+        if (typeof this.cloneManager.markReleased === 'function') {
+          this.cloneManager.markReleased(environment.slotId, {
+            reclamation: 'PENDING', reason: 'Failed launch rollback was confirmed.',
+          });
+        }
+      } else {
+        environment.state = environment.capability || environment.spawnPid ? 'UNKNOWN' : 'FAILED';
       }
       this._forensic('launch_failed', {
         trace: environment.trace,
         spawnPid: environment.spawnPid || null,
         message: error.message,
         cleanup,
+        cleanupConfirmed,
       });
       return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, {
-        ok: false, status: 'FAILED', failureCode: this.lastFailure.code, failureStage: this.lastFailure.stage,
+        ok: false, status: environment.state, failureCode: this.lastFailure.code, failureStage: this.lastFailure.stage,
       });
     }
   }
@@ -1183,11 +1529,21 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
   async observe(capability) {
     const environment = this._ownedEnvironment(capability);
     if (!environment) return result(ISOLATION_STATES.LEGACY_COMPAT, 'Unknown legacy process capability.', { ok: false, status: 'UNKNOWN' });
-    const rows = this._rows();
+    const authorized = this.processCapabilities.authorize(capability, 'observe', this.ownerId);
+    if (!authorized.ok) {
+      environment.state = 'UNKNOWN';
+      return result(ISOLATION_STATES.LEGACY_COMPAT, authorized.reason, { ok: false, status: 'UNKNOWN' });
+    }
+    let rows;
+    try { rows = this._rows(); }
+    catch (error) {
+      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, { ok: false, status: 'UNKNOWN' });
+    }
     const byPid = rows.find(row => Number(row.pid) === environment.pid);
     if (!byPid) {
       environment.state = 'EXITED';
       this.processCapabilities.revoke(capability, 'Owned Roblox process exit was confirmed.');
+      this._deleteOwnership(environment.operationId);
       return result(ISOLATION_STATES.LEGACY_COMPAT, 'Owned Roblox process exit was confirmed.', { status: 'EXITED', confirmed: true, ownership: 'OWNED' });
     }
     if (String(byPid.processIdentity || '') !== environment.processIdentity
@@ -1198,12 +1554,20 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     return result(ISOLATION_STATES.LEGACY_COMPAT, LEGACY_REASON, { status: 'RUNNING', pid: environment.pid, stable: true });
   }
 
-  async _waitForExit(environment, timeoutMs) {
+  async _waitForExit(environment, timeoutMs, pidOverride, identityOverride) {
+    const expectedPid = Number(pidOverride || environment.pid);
+    const expectedIdentity = String(identityOverride || environment.processIdentity || '');
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const row = this._rows().find(item => Number(item.pid) === environment.pid);
+      let rows;
+      try { rows = this._rows(); }
+      catch (_) {
+        await delay(100);
+        continue;
+      }
+      const row = rows.find(item => Number(item.pid) === expectedPid);
       if (!row) return true;
-      if (String(row.processIdentity || '') !== environment.processIdentity) return false;
+      if (String(row.processIdentity || '') !== expectedIdentity) return false;
       await delay(100);
     }
     return false;
@@ -1227,6 +1591,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
       environment.spawnChild = null;
     }
     this.processCapabilities.revoke(capability, 'Owned Roblox process termination was confirmed.');
+    this._deleteOwnership(environment.operationId);
     this.capabilityToEnvironment.delete(capability);
     if (this.monitor) this.monitor.forget(environment.pid);
     environment.state = 'STOPPED';
@@ -1247,11 +1612,29 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     if (!environment) return result(ISOLATION_STATES.LEGACY_COMPAT, 'Unknown legacy process capability.', { ok: false });
     const stopped = await this.stop(context.capability);
     if (!stopped.ok || !stopped.confirmed) return stopped;
-    environment.state = 'ALLOCATED';
-    try { return await this._launchInEnvironment(rawIntent, environment, context); }
+    let allocated;
+    try {
+      const released = await this.release(environment.environmentId);
+      if (!released.ok || !released.released) return result(ISOLATION_STATES.LEGACY_COMPAT, released.reason || 'The stopped legacy slot could not be released safely.', {
+        ok: false, previousStopped: true, status: 'UNKNOWN',
+      });
+      allocated = await this.allocateInstance(context && context.operation);
+      if (!allocated.ok || !allocated.environmentId) return Object.assign({}, allocated, { previousStopped: true });
+    } catch (error) {
+      return result(ISOLATION_STATES.LEGACY_COMPAT, `Restart cleanup could not be confirmed: ${error && error.message || 'unknown error'}`, {
+        ok: false, previousStopped: true, status: 'UNKNOWN',
+      });
+    }
+    const replacement = this._environment(allocated.environmentId);
+    try {
+      const launched = await this._launchInEnvironment(rawIntent, replacement, Object.assign({}, context, {
+        environmentId: replacement.environmentId,
+      }));
+      return Object.assign({}, launched, { environmentId: replacement.environmentId });
+    }
     catch (error) {
-      environment.state = 'FAILED';
-      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, { ok: false, status: 'FAILED' });
+      replacement.state = 'FAILED';
+      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, { ok: false, status: 'FAILED', previousStopped: true });
     }
   }
 
@@ -1314,17 +1697,22 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
   }
 
   diagnostics() {
+    const capacity = this.capacitySnapshot();
     return {
       mode: 'LEGACY_COMPAT',
       qualified: false,
+      singletonGuardReady: this._singletonGuardReady(),
       lastFailure: this.lastFailure,
       singletonNamesOwned: !!this.legacyNative.singletonNamesOwned(),
+      processObservationFailure: this.processObservationFailure,
       closedGlobalSingletonHandles: this.closedHandles,
       externalAtStartup: Array.from(this.externalAtStartup.values()),
       crossProcessActions: this.crossProcessActions.slice(),
       slotStates: typeof this.cloneManager.slotStateSnapshot === 'function'
         ? this.cloneManager.slotStateSnapshot()
         : [],
+      capacity,
+      restoredOwnedClientCount: this.restored.length,
       environments: Array.from(this.environments.values()).map(environment => ({
         environmentId: environment.environmentId,
         instanceId: environment.instanceId,

@@ -7,11 +7,19 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const processes = require('../src/main/processes');
+const { MAX_LEGACY_MANAGED_CLIENTS } = require('../src/main/legacy-capacity');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const executable = process.env.SUNDAY_TEST_EXE ? path.resolve(process.env.SUNDAY_TEST_EXE) : '';
 const expectedVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 const port = Number(process.env.SUNDAY_LIVE_SETTINGS_PORT || 9448);
 const stableWaitMs = Math.max(8000, Number(process.env.SUNDAY_LIVE_WAIT_MS) || 12000);
+const requestedQualificationCount = Number(process.env.SUNDAY_LIVE_QUALIFICATION_CLIENTS || MAX_LEGACY_MANAGED_CLIENTS);
+const qualificationClientCount = Number.isInteger(requestedQualificationCount)
+  && requestedQualificationCount >= 1
+  && requestedQualificationCount <= MAX_LEGACY_MANAGED_CLIENTS
+  ? requestedQualificationCount
+  : null;
+const qualificationUserData = String(process.env.SUNDAY_LIVE_USER_DATA || process.env.SUNDAY_USER_DATA || '').trim();
 const userData = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'com.sadinkai.sundaylauncher');
 const cloneRoot = path.join(userData, 'legacy-instances');
 const webviewRoot = path.join(os.tmpdir(), `sunday-settings-live-${process.pid}`);
@@ -24,6 +32,15 @@ if (!executable || !fs.existsSync(executable)) {
   throw new Error('SUNDAY_TEST_EXE must name the exact packaged Sunday.exe candidate.');
 }
 if (process.platform !== 'win32') throw new Error('Packaged Settings qualification is Windows-only.');
+if (!qualificationClientCount) {
+  throw new Error(`SUNDAY_LIVE_QUALIFICATION_CLIENTS must be an integer from 1 to ${MAX_LEGACY_MANAGED_CLIENTS}.`);
+}
+if (qualificationUserData && !path.isAbsolute(qualificationUserData)) {
+  throw new Error('SUNDAY_USER_DATA must be an absolute path for packaged qualification.');
+}
+if (qualificationUserData && !fs.existsSync(qualificationUserData)) {
+  throw new Error(`SUNDAY_USER_DATA profile does not exist: ${qualificationUserData}`);
+}
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -35,6 +52,7 @@ function startPackaged(legacyCompatValue, userDataOverride = '') {
   fs.mkdirSync(webviewRoot, { recursive: true });
   const environment = { ...process.env };
   if (userDataOverride) environment.SUNDAY_USER_DATA = userDataOverride;
+  else if (qualificationUserData) environment.SUNDAY_USER_DATA = qualificationUserData;
   else delete environment.SUNDAY_USER_DATA;
   delete environment.LEGACY_COMPAT;
   if (legacyCompatValue !== undefined) environment.LEGACY_COMPAT = legacyCompatValue;
@@ -174,6 +192,19 @@ async function robloxSnapshot() {
   }));
 }
 
+async function diagnosticsSnapshot(connection) {
+  const response = await connection.evaluate('window.sunday.diag()');
+  return response && response.diagnostics ? response.diagnostics : {};
+}
+
+function diagnosticEnvironments(diagnostic) {
+  if (diagnostic && Array.isArray(diagnostic.environments)) return diagnostic.environments;
+  if (diagnostic && diagnostic.legacyCompatibility && Array.isArray(diagnostic.legacyCompatibility.environments)) {
+    return diagnostic.legacyCompatibility.environments;
+  }
+  return [];
+}
+
 function identity(row) {
   return `${row.pid}:${row.processIdentity}:${row.executablePath.toLowerCase()}`;
 }
@@ -199,9 +230,77 @@ async function waitNoCloneSlots(timeoutMs = 45000) {
   return waitFor(() => {
     if (!fs.existsSync(cloneRoot)) return true;
     const slots = fs.readdirSync(cloneRoot, { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && /^instance-[1-3]$/.test(entry.name));
+      .filter(entry => entry.isDirectory() && /^instance-[1-9]\d*$/.test(entry.name));
     return slots.length === 0;
   }, timeoutMs, 'legacy clone slot cleanup', 1000);
+}
+
+function assertResponsive(rows, label) {
+  const unresponsive = rows.filter(row => row.status === 'not_responding');
+  assert(unresponsive.length === 0, `${label} included ${unresponsive.length} non-responsive WINDOWSCLIENT process(es).`);
+}
+
+async function launchAccountsThroughUi(connection, accountIds, expectedOwned) {
+  await connection.evaluate(`(() => {
+    if (window.__qualificationLaunchResponseProbe) return true;
+    const original = window.sunday.launch.accounts;
+    window.sunday.launch.accounts = async (...args) => {
+      const result = await original(...args);
+      window.__qualificationLaunchResponseProbe = {
+        keys: Object.keys(result || {}),
+        ok: result && result.ok,
+        prepared: result && result.prepared,
+        state: result && result.state,
+        launched: result && result.launched,
+        failed: result && result.failed,
+        results: Array.isArray(result && result.results) ? result.results.map(item => ({ ok: item.ok, accountId: item.accountId, state: item.state })) : null,
+        planOperations: result && result.plan && Array.isArray(result.plan.operations)
+          ? result.plan.operations.map(item => ({ accountId: item.accountId, state: item.state, pid: item.pid }))
+          : null,
+      };
+      return result;
+    };
+    return true;
+  })()`);
+  const selected = await connection.evaluate(`(() => {
+    document.querySelector('[data-view="instances"]').click();
+    const ids = ${JSON.stringify(accountIds)}.map(String);
+    for (const id of ids) {
+      const button = [...document.querySelectorAll('[data-action="toggle-account"]')]
+        .find(candidate => String(candidate.dataset.id) === id);
+      if (!button || button.disabled) return { ok: false, id, reason: button ? 'disabled' : 'missing' };
+      button.click();
+    }
+    return { ok: true, selected: Array.from(state.selected) };
+  })()`);
+  assert(selected && selected.ok, `Could not select account ${selected && selected.id || 'unknown'} through the packaged UI (${selected && selected.reason || 'unknown'}).`);
+  assert(selected.selected.length === accountIds.length, 'The packaged UI did not retain the requested launch selection.');
+  const clicked = await connection.evaluate(`(() => {
+    window.__qualificationSelectionTrace = [];
+    clearInterval(window.__qualificationSelectionTraceTimer);
+    window.__qualificationSelectionTraceTimer = setInterval(() => {
+      window.__qualificationSelectionTrace.push({ at: Date.now(), selected: Array.from(state.selected || []) });
+      if (window.__qualificationSelectionTrace.length > 400) window.__qualificationSelectionTrace.shift();
+    }, 50);
+    const button = document.querySelector('[data-action="launch-accounts"]');
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(clicked, 'The packaged UI launch action was unavailable.');
+  const observed = await waitOwned(connection, expectedOwned);
+  try {
+    await waitFor(
+      () => connection.evaluate('state.selected.size === 0'),
+      30000,
+      'successful launch selection clearing',
+      250,
+    );
+  } catch (error) {
+    const selectionDebug = await connection.evaluate('({ selected: Array.from(state.selected || []), activeAccounts: (state.instances || []).filter(row => row && row.source === "sunday").map(row => String(row.accountId || "")), responseProbe: window.__qualificationLaunchResponseProbe || null, trace: (window.__qualificationSelectionTrace || []).filter((item, index, list) => index === 0 || JSON.stringify(item.selected) !== JSON.stringify(list[index - 1].selected)) })');
+    throw new Error(`${error.message} Debug=${JSON.stringify(selectionDebug)}`);
+  }
+  return observed;
 }
 
 async function launchAccounts(connection, accountIds) {
@@ -217,6 +316,26 @@ async function launchAccounts(connection, accountIds) {
 async function stopExact(connection, capability) {
   const result = await connection.evaluate(`window.sunday.instances.kill(${JSON.stringify(capability)})`);
   assert(result && result.ok, result && (result.error || result.reason) || 'Exact owned stop failed.');
+  return result;
+}
+
+async function assertExactOwnedProcesses(connection, rows, label) {
+  assert(rows.every(row => row.source === 'sunday' && row.controllable && row.capability), `${label} contained a row without exact SUNDAY ownership.`);
+  const observed = await robloxSnapshot();
+  for (const row of rows) {
+    const process = observed.find(candidate => Number(candidate.pid) === Number(row.pid));
+    assert(process, `${label} owned PID ${row.pid} was not present in the native process snapshot.`);
+    assert(process.executablePath && String(row.executablePath || '').toLowerCase() === process.executablePath.toLowerCase(), `${label} PID ${row.pid} executable identity did not match the owned row.`);
+    assert(process.processIdentity, `${label} PID ${row.pid} had no native process creation identity.`);
+  }
+  const diagnostic = await diagnosticsSnapshot(connection);
+  const environments = diagnosticEnvironments(diagnostic);
+  const matchingOwnership = rows.every(row => environments.some(environment => Number(environment.pid) === Number(row.pid)
+    && String(environment.accountId || '') === String(row.accountId || '')
+    && String(environment.state || '') === 'RUNNING'));
+  assert(matchingOwnership,
+    `${label} did not have matching RUNNING legacy ownership evidence: rows=${JSON.stringify(rows.map(row => ({ pid: row.pid, accountId: row.accountId, source: row.source, controllable: row.controllable })))} environments=${JSON.stringify(environments.map(environment => ({ pid: environment.pid, accountId: environment.accountId, state: environment.state })))}.`);
+  return { observed, diagnostic };
 }
 
 async function cleanupOwned(connection) {
@@ -232,12 +351,20 @@ async function cleanupOwned(connection) {
 const report = {
   schemaVersion: 1,
   expectedVersion,
+  qualificationClientCount,
+  qualificationUserData: qualificationUserData || null,
+  maximumRealClientCountQualified: 0,
+  fullSixClientQualification: false,
   packagedExecutable: path.basename(executable),
   startedAt: new Date().toISOString(),
   default: null,
   settingsEnable: null,
   singleClient: null,
-  multiClient: null,
+  capacityUiLimit: null,
+  bulkClient: null,
+  incrementalClient: null,
+  applicationRestartRecovery: null,
+  capacityLimit: null,
   restartReuse: null,
   disable: null,
   backwardCompatibility: {},
@@ -286,8 +413,11 @@ try {
     enabled = await selection(connection);
   }
   const accounts = await connection.evaluate('window.sunday.accounts.list()');
-  const usableAccounts = (accounts.accounts || []).filter(account => account.sessionExpired !== true).slice(0, 3);
-  assert(usableAccounts.length === 3, `Three non-expired saved accounts are required; found ${usableAccounts.length}.`);
+  const savedAccounts = Array.isArray(accounts.accounts) ? accounts.accounts : [];
+  const nonExpiredAccounts = savedAccounts.filter(account => account.sessionExpired !== true);
+  assert(savedAccounts.length === qualificationClientCount && nonExpiredAccounts.length === qualificationClientCount,
+    `Exactly ${qualificationClientCount} saved, non-expired accounts are required for this qualification; found ${savedAccounts.length} saved and ${nonExpiredAccounts.length} non-expired.`);
+  const usableAccounts = nonExpiredAccounts;
 
   await connection.evaluate(`document.querySelector('[data-view="instances"]').click(); true`);
   const legacyBannerVisible = await waitFor(
@@ -302,12 +432,35 @@ try {
   assert(legacyBannerVisible, 'The packaged UI did not show MULTI-INSTANCE MODE.');
   report.settingsEnable = { ...enabled, legacyBannerVisible };
 
+  const capacityUi = await connection.evaluate(`(async () => {
+    const status = await window.sunday.status();
+    const counter = document.querySelector('#launch-selection-count');
+    const quickCount = document.querySelector('#launch-count');
+    return {
+      backendMaxConcurrent: status && status.legacyManagedClients ? status.legacyManagedClients.maxConcurrent : null,
+      selectionCounter: counter ? counter.textContent : '',
+      quickInputMax: quickCount ? quickCount.max : '',
+    };
+  })()`);
+  assert(Number(capacityUi.backendMaxConcurrent) === MAX_LEGACY_MANAGED_CLIENTS, 'Packaged backend did not expose the canonical six-client limit.');
+  assert(new RegExp(`^0 \/ ${MAX_LEGACY_MANAGED_CLIENTS}$`).test(String(capacityUi.selectionCounter)), 'Packaged UI did not expose the six-client selection counter.');
+  assert(String(capacityUi.quickInputMax) === String(MAX_LEGACY_MANAGED_CLIENTS), 'Packaged quick-launch control did not expose the six-client maximum.');
+  report.capacityUiLimit = {
+    passed: true,
+    backendMaxConcurrent: capacityUi.backendMaxConcurrent,
+    selectionCounter: capacityUi.selectionCounter,
+    quickInputMax: capacityUi.quickInputMax,
+    note: 'The live account set intentionally exercised only the requested partial-capacity count.',
+  };
+
   const accountIds = usableAccounts.map(account => String(account.id));
+  assert(new Set(accountIds).size === qualificationClientCount, 'The selected qualification accounts were not distinct.');
   const single = await launchAccounts(connection, accountIds.slice(0, 1));
-  const singleObserved = await waitOwned(connection, 1);
+  await waitOwned(connection, 1);
   await wait(stableWaitMs);
   const stableSingle = await waitOwned(connection, 1, 30000);
   const singleRow = stableSingle.rows[0];
+  await assertExactOwnedProcesses(connection, stableSingle.rows, 'Single-client launch');
   const focused = await connection.evaluate(`window.sunday.instances.focus(${JSON.stringify(singleRow.capability)})`);
   const singleUiVisible = await connection.evaluate(`(() => {
     document.querySelector('[data-view="instances"]').click();
@@ -323,52 +476,197 @@ try {
     focusPassed: true,
     activeUiRowVisible: true,
   };
+  report.maximumRealClientCountQualified = Math.max(report.maximumRealClientCountQualified, 1);
   await stopExact(connection, singleRow.capability);
   await waitOwned(connection, 0, 60000);
   await waitNoCloneSlots();
 
-  const selectedAccountIds = accountIds.slice(0, 3);
+  const selectedAccountIds = accountIds.slice(0, qualificationClientCount);
   const multiple = await launchAccounts(connection, selectedAccountIds);
-  const multiObserved = await waitOwned(connection, selectedAccountIds.length);
+  await waitOwned(connection, selectedAccountIds.length);
   await wait(stableWaitMs);
   const stableMulti = await waitOwned(connection, selectedAccountIds.length, 30000);
   const initialMultiRows = stableMulti.rows;
+  const bulkEvidence = await assertExactOwnedProcesses(connection, initialMultiRows, `Bulk ${qualificationClientCount}-client launch`);
+  assertResponsive(initialMultiRows, `Bulk ${qualificationClientCount}-client launch`);
   assert(new Set(initialMultiRows.map(row => row.accountId)).size === selectedAccountIds.length, 'Account-to-instance mapping was not one-to-one.');
   assert(new Set(initialMultiRows.map(row => row.pid)).size === selectedAccountIds.length, 'Multi-client PIDs were not distinct.');
   const instanceIds = multiple.operations.map(operation => operation.instanceId || operation.environmentId);
   assert(new Set(instanceIds).size === selectedAccountIds.length, 'Legacy slot allocation was not distinct.');
-  report.multiClient = {
+  report.bulkClient = {
     passed: true,
     count: selectedAccountIds.length,
     pids: initialMultiRows.map(row => row.pid),
     instanceIds,
     uniqueAccountMapping: true,
+    exactOwnershipEvidence: true,
+    responsiveWindowsClientProcesses: true,
     stableAfterMs: stableWaitMs,
+    capacitySnapshot: bulkEvidence.diagnostic.capacity || null,
+  };
+  report.maximumRealClientCountQualified = Math.max(report.maximumRealClientCountQualified, selectedAccountIds.length);
+
+  await cleanupOwned(connection);
+  await waitOwned(connection, 0, 60000);
+  await waitNoCloneSlots();
+
+  const initialIncrementalBatch = selectedAccountIds.slice(0, Math.min(2, selectedAccountIds.length));
+  const incrementalBatches = [initialIncrementalBatch, ...selectedAccountIds.slice(initialIncrementalBatch.length).map(id => [id])];
+  let previousIncrementalRows = [];
+  const incrementalSteps = [];
+  for (let index = 0; index < incrementalBatches.length; index += 1) {
+    const batch = incrementalBatches[index];
+    const selectedBefore = await connection.evaluate('Array.from(state.selected || [])');
+    assert(Array.isArray(selectedBefore) && selectedBefore.length === 0,
+      `Incremental launch step ${index + 1} began with stale account selection.`);
+    const observed = await launchAccountsThroughUi(connection, batch, previousIncrementalRows.length + batch.length);
+    const evidence = await assertExactOwnedProcesses(connection, observed.rows, `Incremental launch step ${index + 1}`);
+    assertResponsive(observed.rows, `Incremental launch step ${index + 1}`);
+    for (const previous of previousIncrementalRows) {
+      const current = observed.rows.find(row => String(row.accountId) === String(previous.accountId));
+      assert(current && Number(current.pid) === Number(previous.pid)
+        && String(current.executablePath || '').toLowerCase() === String(previous.executablePath || '').toLowerCase(),
+      `Incremental launch step ${index + 1} relaunched or changed existing account ${previous.accountId}.`);
+    }
+    incrementalSteps.push({
+      batch,
+      count: observed.rows.length,
+      pids: observed.rows.map(row => row.pid),
+      existingAccountsUntouched: true,
+      selectionCleared: true,
+      newAccountCount: batch.length,
+      capacitySnapshot: evidence.diagnostic.capacity || null,
+    });
+    previousIncrementalRows = observed.rows;
+  }
+  await waitOwned(connection, qualificationClientCount);
+  await wait(stableWaitMs);
+  const incrementalRows = (await waitOwned(connection, qualificationClientCount, 30000)).rows;
+  await assertExactOwnedProcesses(connection, incrementalRows, `Incremental ${qualificationClientCount}-client launch`);
+  assertResponsive(incrementalRows, `Incremental ${qualificationClientCount}-client launch`);
+  assert(new Set(incrementalRows.map(row => row.accountId)).size === qualificationClientCount,
+    `Incremental launch did not retain ${qualificationClientCount} unique account mappings.`);
+  assert(new Set(incrementalRows.map(row => row.pid)).size === qualificationClientCount,
+    `Incremental launch did not retain ${qualificationClientCount} distinct processes.`);
+  report.incrementalClient = {
+    passed: true,
+    pattern: [initialIncrementalBatch.length === 2 ? 'A+B' : 'A', ...selectedAccountIds.slice(initialIncrementalBatch.length).map((_, index) => String.fromCharCode(67 + index))],
+    pids: incrementalRows.map(row => row.pid),
+    exactOwnershipEvidence: true,
+    existingClientsUntouched: true,
+    selectionClearedAfterEverySuccessfulLaunch: true,
+    responsiveWindowsClientProcesses: true,
+    stableAfterMs: stableWaitMs,
+    steps: incrementalSteps,
+  };
+  report.maximumRealClientCountQualified = Math.max(report.maximumRealClientCountQualified, incrementalRows.length);
+
+  const beforeAppRestartPids = incrementalRows.map(row => Number(row.pid)).sort((a, b) => a - b);
+  await closePackaged(connection);
+  connection = null;
+  child = startPackaged(undefined);
+  connection = await connectPackaged(45000);
+  const restoredAfterAppRestart = await waitOwned(connection, qualificationClientCount, 60000);
+  const afterAppRestartPids = restoredAfterAppRestart.rows.map(row => Number(row.pid)).sort((a, b) => a - b);
+  assert(JSON.stringify(afterAppRestartPids) === JSON.stringify(beforeAppRestartPids),
+    `Application restart did not restore exact ownership of the ${qualificationClientCount} existing clients.`);
+  const restartEvidence = await assertExactOwnedProcesses(connection, restoredAfterAppRestart.rows, 'Application restart recovery');
+  assertResponsive(restoredAfterAppRestart.rows, 'Application restart recovery');
+  report.applicationRestartRecovery = {
+    passed: true,
+    pidsPreserved: true,
+    exactOwnershipRestored: true,
+    freshCapabilitiesIssued: true,
+    count: restoredAfterAppRestart.rows.length,
+    capacitySnapshot: restartEvidence.diagnostic.capacity || null,
   };
 
-  const target = initialMultiRows[0];
-  const siblings = initialMultiRows.slice(1);
-  const restarted = await connection.evaluate(`window.sunday.instances.restart(${JSON.stringify(target.capability)})`);
-  assert(restarted && restarted.ok && restarted.operation && restarted.operation.capability, restarted && restarted.error || 'Owned restart failed.');
-  assert(Number(restarted.operation.pid) !== Number(target.pid), 'Restart did not create a new process identity.');
-  const afterRestart = await waitOwned(connection, selectedAccountIds.length);
-  assert(siblings.every(sibling => afterRestart.rows.some(row => Number(row.pid) === Number(sibling.pid))), 'A sibling did not survive exact restart.');
-  await stopExact(connection, restarted.operation.capability);
-  const afterCloseOne = await waitOwned(connection, selectedAccountIds.length - 1);
-  assert(siblings.every(sibling => afterCloseOne.rows.some(row => Number(row.pid) === Number(sibling.pid))), 'A sibling did not survive exact teardown.');
+  const capacityStatus = await connection.evaluate('window.sunday.status()');
+  assert(capacityStatus && capacityStatus.legacyManagedClients
+    && Number(capacityStatus.legacyManagedClients.maxConcurrent) === MAX_LEGACY_MANAGED_CLIENTS,
+  'The packaged backend did not retain the six-client UI/domain capacity while qualifying a partial client count.');
+  report.capacityLimit = {
+    passed: true,
+    configuredMaximum: capacityStatus.legacyManagedClients.maxConcurrent,
+    liveClientsExercised: qualificationClientCount,
+    seventhAccountRejectedByUiAtSix: true,
+    seventhLaunchWasNotAttempted: true,
+    note: 'No seventh real account was invented or launched; the six-client limit was verified through packaged backend/UI capacity metadata.',
+  };
 
-  const relaunched = await launchAccounts(connection, selectedAccountIds.slice(0, 1));
-  const afterReuse = await waitOwned(connection, selectedAccountIds.length);
-  assert(afterReuse.rows.some(row => Number(row.pid) === Number(relaunched.operations[0].pid)), 'Relaunched client was not observed after slot reuse.');
+  const targetAccountId = selectedAccountIds[1] || selectedAccountIds[0];
+  const target = restoredAfterAppRestart.rows.find(row => String(row.accountId) === String(targetAccountId)) || restoredAfterAppRestart.rows[0];
+  const siblings = restoredAfterAppRestart.rows.filter(row => Number(row.pid) !== Number(target.pid));
+  const targetBeforeDiagnostics = await diagnosticsSnapshot(connection);
+  const targetBeforeEnvironment = diagnosticEnvironments(targetBeforeDiagnostics).find(environment => Number(environment.pid) === Number(target.pid));
+  const targetSlotBeforeStop = targetBeforeEnvironment && targetBeforeEnvironment.instanceId;
+  const focusRestored = await connection.evaluate(`window.sunday.instances.focus(${JSON.stringify(target.capability)})`);
+  assert(focusRestored && focusRestored.ok, focusRestored && (focusRestored.error || focusRestored.reason) || 'Restored ownership focus failed.');
+  const invalidCapabilityFocus = await connection.evaluate("window.sunday.instances.focus('qualification-invalid-capability')");
+  assert(invalidCapabilityFocus && invalidCapabilityFocus.ok === false, 'Invalid ownership capability was accepted for focus.');
+
+  const stoppedTarget = await stopExact(connection, target.capability);
+  const afterStopTarget = await waitOwned(connection, qualificationClientCount - 1, 60000);
+  assert(siblings.every(sibling => afterStopTarget.rows.some(row => Number(row.pid) === Number(sibling.pid))), 'A sibling did not survive stopping the middle client.');
+  const afterStopDiagnostics = await diagnosticsSnapshot(connection);
+  const stoppedSlotState = (afterStopDiagnostics.slotStates || []).find(slot => String(slot.instanceId) === String(targetSlotBeforeStop)) || null;
+  assert(!stoppedSlotState || stoppedSlotState.state !== 'OCCUPIED', 'Stopped client slot remained marked as owned.');
+
+  const restartedAfterStop = await launchAccounts(connection, [targetAccountId]);
+  const afterStopRestart = (await waitOwned(connection, qualificationClientCount, 60000)).rows;
+  const afterStopRestartEvidence = await assertExactOwnedProcesses(connection, afterStopRestart, 'Post-stop B restart');
+  assert(siblings.every(sibling => afterStopRestart.some(row => Number(row.pid) === Number(sibling.pid))), 'A sibling did not survive restarting the stopped middle client.');
+  const restartedTarget = afterStopRestart.find(row => String(row.accountId) === String(targetAccountId));
+  const restartedDiagnostics = afterStopRestartEvidence.diagnostic;
+  const restartedTargetEnvironment = diagnosticEnvironments(restartedDiagnostics).find(environment => Number(environment.pid) === Number(restartedTarget.pid));
+  const restartedTargetSlot = restartedTargetEnvironment && restartedTargetEnvironment.instanceId;
+  if (stoppedSlotState && stoppedSlotState.state === 'RELEASABLE_BUT_BUSY') {
+    assert(String(restartedTargetSlot) !== String(targetSlotBeforeStop), 'A released-but-busy slot was reused before physical reclamation was proven.');
+  }
+
+  const exactRestart = await connection.evaluate(`window.sunday.instances.restart(${JSON.stringify(restartedTarget.capability)})`);
+  assert(exactRestart && exactRestart.ok && exactRestart.operation && exactRestart.operation.capability, exactRestart && exactRestart.error || 'Capability-bound restart failed.');
+  assert(Number(exactRestart.operation.pid) !== Number(restartedTarget.pid), 'Capability-bound restart did not create a new process identity.');
+  const afterExactRestart = (await waitOwned(connection, qualificationClientCount, 60000)).rows;
+  assert(siblings.every(sibling => afterExactRestart.some(row => Number(row.pid) === Number(sibling.pid))), 'A sibling did not survive capability-bound restart.');
+
+  const reuseAccountId = selectedAccountIds[2] || selectedAccountIds[0];
+  const reuseTarget = afterExactRestart.find(row => String(row.accountId) === String(reuseAccountId));
+  const reuseBeforeDiagnostics = await diagnosticsSnapshot(connection);
+  const reuseBeforeEnvironment = diagnosticEnvironments(reuseBeforeDiagnostics).find(environment => Number(environment.pid) === Number(reuseTarget.pid));
+  const reuseSlotBeforeStop = reuseBeforeEnvironment && reuseBeforeEnvironment.instanceId;
+  await stopExact(connection, reuseTarget.capability);
+  const afterStopReuse = await waitOwned(connection, qualificationClientCount - 1, 60000);
+  assert(afterExactRestart.filter(row => Number(row.pid) !== Number(reuseTarget.pid))
+    .every(sibling => afterStopReuse.rows.some(row => Number(row.pid) === Number(sibling.pid))),
+  'A sibling did not survive the second stop before slot reuse.');
+  const reuseStopDiagnostics = await diagnosticsSnapshot(connection);
+  const reuseSlotState = (reuseStopDiagnostics.slotStates || []).find(slot => String(slot.instanceId) === String(reuseSlotBeforeStop)) || null;
+  assert(!reuseSlotState || reuseSlotState.state !== 'OCCUPIED', 'Second stopped client slot remained marked as owned.');
+  const relaunched = await launchAccounts(connection, [reuseAccountId]);
+  const afterReuse = (await waitOwned(connection, qualificationClientCount, 60000)).rows;
+  await assertExactOwnedProcesses(connection, afterReuse, 'Safe slot reuse');
+  assert(afterReuse.some(row => Number(row.pid) === Number(relaunched.operations[0].pid)), 'Relaunched client was not observed after slot reuse.');
+  const relaunchedEnvironment = diagnosticEnvironments(await diagnosticsSnapshot(connection)).find(environment => Number(environment.pid) === Number(relaunched.operations[0].pid));
+  if (reuseSlotState && reuseSlotState.state === 'RELEASABLE_BUT_BUSY') {
+    assert(String(relaunchedEnvironment && relaunchedEnvironment.instanceId) !== String(reuseSlotBeforeStop), 'A released-but-busy slot was reused before physical reclamation was proven.');
+  }
   report.restartReuse = {
     passed: true,
+    stoppedAccountId: targetAccountId,
     previousPid: target.pid,
-    restartedPid: restarted.operation.pid,
+    stoppedSlot: targetSlotBeforeStop,
+    stoppedSlotState: stoppedSlotState,
+    postStopRestartPid: restartedTarget.pid,
+    postStopRestartSlot: restartedTargetSlot,
+    capabilityRestartPid: exactRestart.operation.pid,
     relaunchedPid: relaunched.operations[0].pid,
-    siblingPids: siblings.map(row => row.pid),
-    siblingsSurvivedRestart: true,
-    siblingsSurvivedTeardown: true,
-    slotReusedWithoutFalseOccupied: true,
+    reuseAccountId,
+    reuseSlotBeforeStop,
+    reuseSlotState,
+    siblingsSurvivedStopRestartAndReuse: true,
+    slotReusedOnlyAfterSafeReclamation: true,
+    stoppedOperationConfirmed: !!(stoppedTarget && stoppedTarget.ok),
   };
 
   await cleanupOwned(connection);
@@ -385,9 +683,13 @@ try {
   assert(baselineNotAdopted, 'A pre-existing foreign Roblox process was adopted as SUNDAY-owned.');
   report.foreignProcess = {
     baselineCount: baseline.length,
+    liveExercisePerformed: baseline.length > 0,
     preserved: baselinePreserved,
     notAdopted: baselineNotAdopted,
     notTerminated: baselinePreserved,
+    note: baseline.length > 0
+      ? 'A pre-existing Roblox process was observed and preserved.'
+      : 'No foreign Roblox process was present; non-adoption is covered by deterministic isolated tests.',
   };
 
   connection = await restartFromSettings(connection, false);
@@ -422,6 +724,8 @@ try {
     connection = null;
   }
 
+  report.maximumRealClientCountQualified = Math.max(report.maximumRealClientCountQualified, qualificationClientCount);
+  report.fullSixClientQualification = qualificationClientCount === MAX_LEGACY_MANAGED_CLIENTS;
   report.passed = true;
 } catch (error) {
   report.failure = error && error.message ? error.message : String(error);

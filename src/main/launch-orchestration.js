@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const EventEmitter = require('events');
 const { ISOLATION_STATES, isActivated } = require('./roblox-isolation-adapter');
+const { MAX_LEGACY_MANAGED_CLIENTS } = require('./legacy-capacity');
 
 const PLAN_NAMESPACE = 'launch-plans-v1';
 const PLAN_STATES = Object.freeze({
@@ -17,6 +18,14 @@ const PLAN_STATES = Object.freeze({
   RECOVERY_REQUIRED: 'RECOVERY_REQUIRED',
 });
 const OP_FINAL = new Set(['RUNNING', 'BLOCKED', 'UNAVAILABLE', 'FAILED', 'CANCELLED', 'STOPPED', 'UNKNOWN']);
+const PLAN_TERMINAL = new Set([
+  PLAN_STATES.BLOCKED,
+  PLAN_STATES.COMPLETED,
+  PLAN_STATES.PARTIAL,
+  PLAN_STATES.FAILED,
+  PLAN_STATES.CANCELLED,
+  PLAN_STATES.RECOVERY_REQUIRED,
+]);
 const SENSITIVE_KEY = /(cookie|ticket|credential|password|secret|deeplink|auth)/i;
 
 function classifyLaunchFailure(input) {
@@ -34,11 +43,24 @@ function classifyLaunchFailure(input) {
   if (/already running|will not adopt/.test(value)) {
     return { code: 'CLIENT_ALREADY_RUNNING', reason: 'A Roblox client is already running. SUNDAY will not adopt or replace it.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
   }
+  if (/capacity reached|active or in-flight managed clients|safety ceiling/.test(value)) {
+    return { code: 'CAPACITY_REACHED', reason: `SUNDAY supports up to ${MAX_LEGACY_MANAGED_CLIENTS} simultaneous managed clients. Stop a managed client or wait for an in-flight launch to finish.`, actions: ['VIEW_DIAGNOSTICS'] };
+  }
+  if (/already has an active or in-flight sunday-managed client/.test(value)) {
+    return { code: 'DUPLICATE_ACCOUNT_OPERATION', reason: 'That account already has an active or in-flight SUNDAY-managed client.', actions: ['VIEW_DIAGNOSTICS'] };
+  }
   if (/startup error dialog/.test(value)) {
     return { code: 'ROBLOX_STARTUP_ERROR', reason: 'Roblox opened a startup error dialog.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
   }
   if (/exited during startup|exited before reaching/.test(value)) {
     return { code: 'PROCESS_EXITED', reason: 'Roblox exited during startup.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/singleton event|singleton names|singleton ownership/.test(value)) {
+    return {
+      code: 'SINGLETON_GUARD_UNAVAILABLE',
+      reason: "Multi-instance compatibility could not reserve Roblox's singleton event. Close Roblox Player and other multi-instance launchers, then retry.",
+      actions: ['RETRY', 'VIEW_DIAGNOSTICS'],
+    };
   }
   if (/ownership|identity|could not be proven/.test(value)) {
     return { code: 'OWNERSHIP_NOT_VERIFIED', reason: 'SUNDAY could not verify ownership of the launched Roblox process.', actions: ['RETRY', 'VIEW_DIAGNOSTICS'] };
@@ -57,6 +79,13 @@ function classifyLaunchFailure(input) {
   }
   if (/windows could not start roblox|process creation did not return a pid|spawn/.test(value)) {
     return { code: 'SPAWN_FAILED', reason: 'Windows could not start Roblox.', actions: ['RETRY', 'OPEN_SETTINGS', 'VIEW_DIAGNOSTICS'] };
+  }
+  if (/environment release was not confirmed|cleanup.*not confirmed/.test(value)) {
+    return {
+      code: 'CLEANUP_UNCONFIRMED',
+      reason: 'SUNDAY could not confirm allocated environment cleanup. Recovery is required before this slot can be reused.',
+      actions: ['VIEW_DIAGNOSTICS'],
+    };
   }
   if (/cancel/.test(value)) {
     return { code: 'CANCELLED', reason: 'Launch was cancelled.', actions: [] };
@@ -113,7 +142,9 @@ function sanitizeParticipants(input) {
     rows.push({ accountId: accountId.slice(0, 160), label: String(item.label || item.username || accountId).slice(0, 80) });
   }
   if (!rows.length) throw new Error('Choose at least one account.');
-  if (rows.length > 3) throw new Error('SUNDAY Launcher launch plans support at most 3 accounts.');
+  if (rows.length > MAX_LEGACY_MANAGED_CLIENTS) {
+    throw new Error(`SUNDAY Launcher launch plans support at most ${MAX_LEGACY_MANAGED_CLIENTS} accounts.`);
+  }
   return rows;
 }
 
@@ -168,8 +199,9 @@ class LaunchPlanStore {
   }
 
   create(plan) {
-    assertNoSecrets(plan, 'plan.');
-    return this.database.put(PLAN_NAMESPACE, plan.planId, copy(plan), { expectedRevision: 0 }).value;
+    const persisted = this._persistable(plan);
+    assertNoSecrets(persisted, 'plan.');
+    return this.database.put(PLAN_NAMESPACE, plan.planId, persisted, { expectedRevision: 0 }).value;
   }
 
   get(planId) {
@@ -190,26 +222,68 @@ class LaunchPlanStore {
       if (!current) throw new Error('Unknown launch plan.');
       const next = mutator(copy(current)) || current;
       next.updatedAt = nowIso(this.now);
-      assertNoSecrets(next, 'plan.');
-      return next;
+      const persisted = this._persistable(next);
+      assertNoSecrets(persisted, 'plan.');
+      return persisted;
     }).value;
   }
 
-  recoverInterrupted() {
+  _persistable(plan) {
+    const persisted = copy(plan);
+    for (const operation of (persisted.operations || [])) operation.capability = null;
+    return persisted;
+  }
+
+  recoverInterrupted(restoredOwnership) {
+    const restored = new Map((Array.isArray(restoredOwnership) ? restoredOwnership : [])
+      .map(item => [String(item && item.operationId || ''), item]));
     const recovered = [];
     for (const plan of this.list(200)) {
-      if (![PLAN_STATES.RUNNING, PLAN_STATES.CANCEL_REQUESTED].includes(plan.state)) continue;
+      const interrupted = (plan.operations || []).some(operation =>
+        operation.state === 'RUNNING' || !OP_FINAL.has(operation.state));
+      if (!interrupted) continue;
       this.update(plan.planId, current => {
-        current.state = PLAN_STATES.RECOVERY_REQUIRED;
-        current.reason = 'SUNDAY Launcher restarted while this plan was active. Process ownership was not adopted; explicit reconciliation is required.';
+        let rebound = 0;
+        let unknown = 0;
         for (const operation of current.operations) {
-          if (!OP_FINAL.has(operation.state) || operation.state === 'RUNNING') {
+          if (operation.state === 'RUNNING') {
+            const evidence = restored.get(operation.operationId);
+            const matches = evidence
+              && String(evidence.accountId || '') === String(operation.accountId || '')
+              && String(evidence.instanceId || '') === String(operation.instanceId || '');
+            if (matches) {
+              operation.state = 'RUNNING';
+              operation.environmentId = evidence.environmentId;
+              operation.instanceId = evidence.instanceId;
+              operation.pid = Number(evidence.pid) || null;
+              operation.reason = '';
+              rebound += 1;
+            } else {
+              unknown += 1;
+              operation.state = 'UNKNOWN';
+              operation.reason = 'Persisted ownership evidence did not match a live Roblox process.';
+              operation.pid = null;
+            }
+            operation.capability = null;
+            operation.updatedAt = nowIso(this.now);
+          } else if (!OP_FINAL.has(operation.state)) {
+            unknown += 1;
             operation.state = 'UNKNOWN';
-            operation.reason = 'Ownership cannot be assumed after broker restart.';
+            operation.reason = 'SUNDAY restarted before this launch operation reached a final state.';
             operation.capability = null;
             operation.pid = null;
             operation.updatedAt = nowIso(this.now);
           }
+        }
+        if (unknown) {
+          current.state = PLAN_STATES.RECOVERY_REQUIRED;
+          current.reason = 'SUNDAY restarted and one or more operations could not be rebound to exact persisted ownership evidence.';
+        } else if (rebound === current.operations.length) {
+          current.state = PLAN_STATES.COMPLETED;
+          current.reason = '';
+        } else if (rebound) {
+          current.state = PLAN_STATES.PARTIAL;
+          current.reason = '';
         }
         return current;
       });
@@ -235,7 +309,17 @@ class LaunchCoordinator extends EventEmitter {
     this.now = opts.now || (() => Date.now());
     this.operationTimeoutMs = Math.max(100, Number(opts.operationTimeoutMs) || 30000);
     this.active = new Map();
-    this.recovered = this.store.recoverInterrupted();
+    this.operationCapabilities = new Map();
+    this.lifecycleActions = new Map();
+    const restoredOwnership = typeof this.adapter.restoredOwnership === 'function'
+      ? this.adapter.restoredOwnership()
+      : [];
+    this.recovered = this.store.recoverInterrupted(restoredOwnership);
+    for (const evidence of restoredOwnership) {
+      const plan = this.store.list(200).find(item => (item.operations || [])
+        .some(operation => operation.operationId === evidence.operationId && operation.state === 'RUNNING'));
+      if (plan && evidence.capability) this.operationCapabilities.set(evidence.operationId, evidence.capability);
+    }
   }
 
   _emit(plan) {
@@ -248,6 +332,30 @@ class LaunchCoordinator extends EventEmitter {
 
   get(planId) { return this.store.get(planId); }
   list(limit) { return this.store.list(limit); }
+
+  findOperationByCapability(capability) {
+    const token = String(capability || '');
+    const operationId = Array.from(this.operationCapabilities.entries())
+      .find(([, value]) => value === token)?.[0];
+    if (!operationId) return null;
+    for (const plan of this.store.list(200)) {
+      const operation = (plan.operations || []).find(item => item.operationId === operationId);
+      if (operation) return { plan, operation };
+    }
+    return null;
+  }
+
+  capabilityForOperation(operationId) {
+    return this.operationCapabilities.get(String(operationId || '')) || '';
+  }
+
+  _withRuntimeCapabilities(plan) {
+    const materialized = copy(plan);
+    for (const operation of (materialized && materialized.operations || [])) {
+      operation.capability = this.capabilityForOperation(operation.operationId) || null;
+    }
+    return materialized;
+  }
 
   async prepare(input) {
     const plan = this.store.create(this.planner.create(input));
@@ -301,23 +409,38 @@ class LaunchCoordinator extends EventEmitter {
 
       plan = this.store.get(plan.planId);
       if (controller.signal.aborted || plan.state === PLAN_STATES.CANCEL_REQUESTED) {
-        await this._stopRuntime(runtime);
+        const stopOutcomes = await this._stopRuntime(runtime);
         plan = this._update(plan.planId, current => {
-          current.state = PLAN_STATES.CANCELLED;
-          current.reason = 'Launch plan was cancelled.';
+          let recoveryRequired = false;
           for (const operation of current.operations) {
-            if (!OP_FINAL.has(operation.state) || operation.state === 'RUNNING') {
-              operation.state = operation.state === 'RUNNING' ? 'STOPPED' : 'CANCELLED';
+            if (operation.state === 'UNKNOWN') {
+              recoveryRequired = true;
+            } else if (operation.state === 'RUNNING') {
+              const outcome = stopOutcomes.get(operation.operationId);
+              operation.state = outcome && outcome.state || 'UNKNOWN';
+              operation.reason = outcome && outcome.reason || 'Cancellation could not confirm the owned client stopped.';
+              if (outcome && outcome.processExited) operation.pid = null;
+              if (operation.state === 'UNKNOWN') recoveryRequired = true;
+              operation.updatedAt = nowIso(this.now);
+            } else if (!OP_FINAL.has(operation.state)) {
+              operation.state = 'CANCELLED';
               operation.reason = 'Launch plan was cancelled.';
               operation.updatedAt = nowIso(this.now);
             }
           }
+          current.state = recoveryRequired ? PLAN_STATES.RECOVERY_REQUIRED : PLAN_STATES.CANCELLED;
+          current.reason = recoveryRequired
+            ? 'Cancellation could not confirm cleanup for one or more owned clients.'
+            : 'Launch plan was cancelled.';
           return current;
         });
       } else {
         const running = plan.operations.filter(operation => operation.state === 'RUNNING').length;
+        const recoveryRequired = plan.operations.some(operation => operation.state === 'UNKNOWN');
         plan = this._update(plan.planId, current => {
-          current.state = running === current.operations.length
+          current.state = recoveryRequired
+            ? PLAN_STATES.RECOVERY_REQUIRED
+            : running === current.operations.length
             ? PLAN_STATES.COMPLETED
             : (running ? PLAN_STATES.PARTIAL : PLAN_STATES.FAILED);
           const firstFailure = current.operations.find(operation => operation.state !== 'RUNNING');
@@ -404,10 +527,11 @@ class LaunchCoordinator extends EventEmitter {
         });
       }
       runtime.capabilities.set(operationId, launched.capability);
+      this.operationCapabilities.set(operationId, launched.capability);
       return this._update(planId, current => {
         const currentOperation = current.operations.find(item => item.operationId === operationId);
         currentOperation.state = 'RUNNING';
-        currentOperation.capability = launched.capability;
+        currentOperation.capability = null;
         currentOperation.pid = Number(launched.pid) || null;
         currentOperation.reason = '';
         currentOperation.updatedAt = nowIso(this.now);
@@ -425,22 +549,24 @@ class LaunchCoordinator extends EventEmitter {
   async _failAndRelease(planId, operationId, runtime, reason, state, metadata) {
     const environmentId = runtime.environments.get(operationId);
     if (environmentId && !runtime.capabilities.has(operationId)) {
+      const cleanupMetadata = Object.assign({}, metadata, {
+        failureCode: 'CLEANUP_UNCONFIRMED',
+        failureStage: 'cleanup',
+      });
       try {
         const released = await this.adapter.release(environmentId);
         if (released && released.ok && released.released) {
           runtime.environments.delete(operationId);
-        } else if (state !== 'CANCELLED') {
+        } else {
           return this._failOperation(
             planId,
             operationId,
             `${reason} Environment release was not confirmed: ${released && released.reason || 'unknown release result'}`,
-            'UNKNOWN', metadata,
+            'UNKNOWN', cleanupMetadata,
           );
         }
       } catch (error) {
-        if (state !== 'CANCELLED') {
-          return this._failOperation(planId, operationId, `${reason} Environment release was not confirmed: ${error.message}`, 'UNKNOWN', metadata);
-        }
+        return this._failOperation(planId, operationId, `${reason} Environment release was not confirmed: ${error.message}`, 'UNKNOWN', cleanupMetadata);
       }
     }
     return this._failOperation(planId, operationId, reason, state, metadata);
@@ -462,7 +588,7 @@ class LaunchCoordinator extends EventEmitter {
   async cancel(planId) {
     let plan = this.store.get(planId);
     if (!plan) return { ok: false, error: 'Unknown launch plan.' };
-    if ([PLAN_STATES.CANCELLED, PLAN_STATES.COMPLETED, PLAN_STATES.FAILED].includes(plan.state)) {
+    if (PLAN_TERMINAL.has(plan.state)) {
       return { ok: true, plan };
     }
     plan = this._update(planId, current => { current.state = PLAN_STATES.CANCEL_REQUESTED; current.reason = 'Cancellation requested.'; return current; });
@@ -483,53 +609,132 @@ class LaunchCoordinator extends EventEmitter {
   async stop(planId, operationId) {
     const plan = this.store.get(planId);
     const operation = plan && plan.operations.find(item => item.operationId === operationId);
-    if (!operation || operation.state !== 'RUNNING' || !operation.capability) return { ok: false, error: 'No running owned operation matches that request.' };
-    const stopped = await this.adapter.stop(operation.capability, { environmentId: operation.environmentId });
-    if (!(stopped && stopped.ok && stopped.confirmed)) return { ok: false, error: stopped && stopped.reason || 'Owned stop was not confirmed.' };
-    const released = await this.adapter.release(operation.environmentId);
-    if (!(released && released.ok && released.released)) {
+    const capability = this.operationCapabilities.get(operationId);
+    if (!operation || operation.state !== 'RUNNING' || !capability) return { ok: false, error: 'No running owned operation matches that request.' };
+    if (this.lifecycleActions.has(operationId)) {
+      return { ok: false, error: `A lifecycle action is already in progress for this client.` };
+    }
+    this.lifecycleActions.set(operationId, 'stop');
+    try {
+      const stopped = await this.adapter.stop(capability, { environmentId: operation.environmentId });
+      if (!(stopped && stopped.ok && stopped.confirmed)) return { ok: false, error: stopped && stopped.reason || 'Owned stop was not confirmed.' };
+      let released;
+      try {
+        released = await this.adapter.release(operation.environmentId);
+      } catch (error) {
+        released = {
+          ok: false,
+          released: false,
+          reason: `Owned process stopped, but environment release was not confirmed: ${error && error.message || 'unknown error'}`,
+        };
+      }
+      if (!(released && released.ok && released.released)) {
+        const updated = this._update(planId, current => {
+          const item = current.operations.find(value => value.operationId === operationId);
+          item.state = 'UNKNOWN'; item.reason = released && released.reason || 'Owned process stopped, but environment release was not confirmed.';
+          item.capability = null; item.pid = null; item.updatedAt = nowIso(this.now); return current;
+        });
+        this.operationCapabilities.delete(operationId);
+        return { ok: false, error: updated.operations.find(item => item.operationId === operationId).reason, plan: updated };
+      }
       const updated = this._update(planId, current => {
         const item = current.operations.find(value => value.operationId === operationId);
-        item.state = 'UNKNOWN'; item.reason = released && released.reason || 'Owned process stopped, but environment release was not confirmed.';
+        item.state = 'STOPPED';
         item.capability = null; item.pid = null; item.updatedAt = nowIso(this.now); return current;
       });
-      return { ok: false, error: updated.operations.find(item => item.operationId === operationId).reason, plan: updated };
+      this.operationCapabilities.delete(operationId);
+      return { ok: true, plan: updated };
+    } finally {
+      this.lifecycleActions.delete(operationId);
     }
-    const updated = this._update(planId, current => {
-      const item = current.operations.find(value => value.operationId === operationId);
-      item.state = 'STOPPED'; item.capability = null; item.pid = null; item.updatedAt = nowIso(this.now); return current;
-    });
-    return { ok: true, plan: updated };
   }
 
   async restart(planId, operationId) {
-    const preflight = await this.adapter.preflight({ planId, operationId });
-    if (!isActivated(preflight)) return { ok: false, state: preflight.state, error: preflight.reason };
     const plan = this.store.get(planId);
     const operation = plan && plan.operations.find(item => item.operationId === operationId);
-    if (!operation || operation.state !== 'RUNNING' || !operation.capability) return { ok: false, error: 'No running owned operation matches that request.' };
-    const resolved = await this.resolveIntent(copy(operation), {});
-    if (!resolved || !resolved.ok || !resolved.intent) return { ok: false, error: resolved && resolved.reason || 'Launch intent could not be resolved.' };
-    const restarted = await this.adapter.restart(resolved.intent, {
-      environmentId: operation.environmentId,
-      capability: operation.capability,
-      operation: copy(operation),
-    });
-    if (!isActivated(restarted) || !restarted.capability) return { ok: false, error: restarted && restarted.reason || 'Restart failed.' };
-    const updated = this._update(planId, current => {
-      const item = current.operations.find(value => value.operationId === operationId);
-      item.state = 'RUNNING'; item.capability = restarted.capability; item.pid = Number(restarted.pid) || null; item.updatedAt = nowIso(this.now); return current;
-    });
-    return { ok: true, plan: updated, operation: updated.operations.find(item => item.operationId === operationId) };
+    const capability = this.operationCapabilities.get(operationId);
+    if (!operation || operation.state !== 'RUNNING' || !capability) return { ok: false, error: 'No running owned operation matches that request.' };
+    if (this.lifecycleActions.has(operationId)) {
+      return { ok: false, error: `A lifecycle action is already in progress for this client.` };
+    }
+    this.lifecycleActions.set(operationId, 'restart');
+    try {
+      const preflight = await this.adapter.preflight({ planId, operationId });
+      if (!isActivated(preflight)) return { ok: false, state: preflight.state, error: preflight.reason };
+      const resolved = await this.resolveIntent(copy(operation), {});
+      if (!resolved || !resolved.ok || !resolved.intent) return { ok: false, error: resolved && resolved.reason || 'Launch intent could not be resolved.' };
+      const restarted = await this.adapter.restart(resolved.intent, {
+        environmentId: operation.environmentId,
+        capability,
+        operation: copy(operation),
+      });
+      if (!isActivated(restarted) || !restarted.capability) {
+        if (restarted && restarted.previousStopped) {
+          const updated = this._update(planId, current => {
+            const item = current.operations.find(value => value.operationId === operationId);
+            item.state = restarted.status === 'UNKNOWN' ? 'UNKNOWN' : 'STOPPED';
+            item.reason = restarted.reason || 'Restart failed after the previous owned process stopped.';
+            item.capability = null;
+            item.pid = null;
+            item.updatedAt = nowIso(this.now);
+            return current;
+          });
+          this.operationCapabilities.delete(operationId);
+          return { ok: false, error: restarted.reason || 'Restart failed after the previous owned process stopped.', plan: updated };
+        }
+        return { ok: false, error: restarted && restarted.reason || 'Restart failed.' };
+      }
+      const updated = this._update(planId, current => {
+        const item = current.operations.find(value => value.operationId === operationId);
+        item.state = 'RUNNING'; item.capability = null; item.pid = Number(restarted.pid) || null;
+        item.environmentId = restarted.environmentId || item.environmentId;
+        item.instanceId = restarted.instanceId || item.instanceId;
+        item.updatedAt = nowIso(this.now); return current;
+      });
+      this.operationCapabilities.set(operationId, restarted.capability);
+      const materialized = this._withRuntimeCapabilities(updated);
+      return { ok: true, plan: materialized, operation: materialized.operations.find(item => item.operationId === operationId) };
+    } finally {
+      this.lifecycleActions.delete(operationId);
+    }
   }
 
   async _stopRuntime(runtime) {
+    const outcomes = new Map();
     await Promise.all(Array.from(runtime.capabilities.entries()).map(async ([operationId, capability]) => {
       try {
         const stopped = await this.adapter.stop(capability, { operationId, environmentId: runtime.environments.get(operationId) });
-        if (stopped && stopped.ok && stopped.confirmed) await this.adapter.release(runtime.environments.get(operationId));
-      } catch (_) { /* state remains non-running when ownership cannot be confirmed */ }
+        if (!(stopped && stopped.ok && stopped.confirmed)) {
+          outcomes.set(operationId, {
+            state: 'UNKNOWN',
+            processExited: false,
+            reason: stopped && stopped.reason || 'Owned client termination was not confirmed.',
+          });
+          return;
+        }
+        this.operationCapabilities.delete(operationId);
+        runtime.capabilities.delete(operationId);
+        const released = await this.adapter.release(runtime.environments.get(operationId));
+        if (released && released.ok && released.released) {
+          runtime.environments.delete(operationId);
+          outcomes.set(operationId, {
+            state: 'STOPPED', processExited: true, reason: 'Launch plan was cancelled.',
+          });
+        } else {
+          outcomes.set(operationId, {
+            state: 'UNKNOWN',
+            processExited: true,
+            reason: released && released.reason || 'Owned client stopped, but environment release was not confirmed.',
+          });
+        }
+      } catch (error) {
+        outcomes.set(operationId, {
+          state: 'UNKNOWN', processExited: false,
+          reason: `Cancellation cleanup failed: ${error && error.message || 'unknown error'}`,
+        });
+      }
     }));
+    return outcomes;
   }
 
   _abortableDelay(ms, signal) {
@@ -567,12 +772,13 @@ class LaunchCoordinator extends EventEmitter {
     const failed = plan.operations.length - launched;
     const prepared = plan.state === PLAN_STATES.BLOCKED || plan.state === PLAN_STATES.PREPARED;
     const failure = plan.reason ? classifyLaunchFailure(plan.reason) : null;
+    const materialized = this._withRuntimeCapabilities(plan);
     return {
       ok: plan.state === PLAN_STATES.COMPLETED,
       prepared,
       planId: plan.planId,
       state: isolationState || plan.state,
-      plan,
+      plan: materialized,
       selectedCount: plan.operations.length,
       launched,
       failed,

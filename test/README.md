@@ -9,5 +9,5 @@ harnesses are not part of this repository. `smoke.js` is a non-launching
 packaged UI check guarded by `SUNDAY_PACKAGED_UI_SMOKE=1`; start the candidate
 with a fresh `SUNDAY_USER_DATA` directory and a dedicated remote-debugging port.
 It does not click Join or launch Roblox. `ui-features.js` is a broader optional
-native UI driver and remains outside the v1.8.17 release gates. Neither script
+native UI driver and remains outside the v1.8.18 release gates. Neither script
 turns a synthetic or source result into real Roblox qualification.

@@ -15,12 +15,12 @@ managed clients from one dashboard.
 2. Download `SundayInstaller.exe` from the latest release.
 3. Run the installer and open **SUNDAY**.
 
-The v1.8.17 Windows binaries are unsigned. Windows SmartScreen may show
+The v1.8.18 Windows binaries are unsigned. Windows SmartScreen may show
 a warning because the files do not carry an Authenticode publisher signature.
 Verify that the download came from the canonical Releases page and compare its
 SHA-256 hash with `SHA256SUMS.txt` on that release.
 
-You can instead download `SundayPortable_1.8.17_x64.zip`, extract it into a new
+You can instead download `SundayPortable_1.8.18_x64.zip`, extract it into a new
 folder, and run `Sunday.exe`.
 
 ## Add an account
@@ -43,7 +43,7 @@ Windows user. It does not show the raw cookie in the normal interface. Read
 5. Manage clients SUNDAY launched in **Active clients**.
 
 Multi-instance mode is enabled by default on a fresh installation and can
-launch one to three managed clients through SUNDAY's legacy compatibility
+launch one to six managed clients through SUNDAY's legacy compatibility
 path. Normal use does not require an environment variable, PowerShell command,
 or developer configuration. An explicit choice saved by an existing user is
 preserved during upgrade.

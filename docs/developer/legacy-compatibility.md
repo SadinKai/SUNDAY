@@ -7,11 +7,11 @@ SUNDAY provides two explicit adapter states.
 An explicit saved `multiInstanceMode: false` preference selects
 `UnavailableRobloxIsolationAdapter`. It can produce a launch plan but cannot
 execute Roblox. Removing the preference on a fresh profile does not select this
-state because v1.8.17 defaults a missing preference to enabled.
+state because v1.8.18 defaults a missing preference to enabled.
 
 ## Legacy compatibility mode
 
-On v1.8.17, a missing first-run preference or saved `multiInstanceMode: true`
+On v1.8.18, a missing first-run preference or saved `multiInstanceMode: true`
 selects `LegacyRobloxIsolationAdapter` at startup. The exact
 `LEGACY_COMPAT=1` environment value remains a backward-compatible override. In
 either case the UI displays **MULTI-INSTANCE MODE** and the legacy compatibility
@@ -21,7 +21,7 @@ The adapter preserves the established:
 
 - per-slot clone builder and pre-spawn tree validation;
 - singleton compatibility handling;
-- three-slot allocation boundary;
+- six-managed-client logical allocation boundary with bounded physical headroom;
 - `RELEASED_BUT_BUSY` reclamation behavior;
 - process-capability ownership rules;
 - close, restart, cleanup, and sibling-preservation behavior.
@@ -40,10 +40,25 @@ modified.
 
 - This is not vendor-supported isolation.
 - Roblox updates may change filesystem, singleton, or launch behavior.
-- Up to three slots is a project boundary, not a performance guarantee.
+- Six managed clients is a project boundary, not a performance guarantee.
 - SUNDAY never adopts a client it did not launch.
 - A Roblox error dialog is not considered a running client.
 - Live qualification is version- and environment-specific.
+
+The allocator keeps logical client capacity separate from physical clone-slot
+history. A slot is reusable only after its exact ownership is released and its
+executable is no longer occupied. If several histories remain
+`RELEASED_BUT_BUSY`, bounded headroom allows a later safe slot without raising
+the managed-client ceiling above six.
+
+Application restart recovery is equally fail-closed. The ownership store
+contains only non-secret process and file identity evidence. Exact matches are
+given fresh in-memory capabilities; stale, mismatched, or merely foreign
+processes are not adopted. Launch-plan persistence contains no capability
+secret. Existing v1.8.17 plans and slot state remain readable. A pre-upgrade
+operation that was still running is restored only with matching new ownership
+evidence; without that evidence it is reported as UNKNOWN and is not adopted
+or killed.
 
 Use only accounts and installations you own or are authorized to operate, and
 follow Roblox's terms and applicable rules.
@@ -69,3 +84,11 @@ was adopted or terminated. The observed Roblox build was
 This evidence applies only to that packaged candidate, Roblox build, Windows
 environment, and authorized account set. Roblox updates, local installation
 shape, or Windows changes can invalidate it; it is not a permanent guarantee.
+
+The full-capacity v1.8.18 gate exercises bulk six, incremental A+B then C
+through F, application restart while all six remain alive, clean seventh-launch
+rejection, exact restart/stop/reuse, and responsive `WINDOWSCLIENT`
+verification. A controlled bounded qualification may exercise fewer authorized
+accounts, but its release evidence must state the exact real-client count and
+must not claim that the remaining capacity passed a live test. Source,
+synthetic, and build passes do not substitute for either live evidence class.

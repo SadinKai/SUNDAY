@@ -176,6 +176,7 @@ async function fetchWithPolicy(value, options, policyName) {
           if (next.hostname.toLowerCase() !== url.hostname.toLowerCase()) {
             throw policyFailure('Cross-host redirects are not permitted.');
           }
+          try { if (response.body) await response.body.cancel('redirect'); } catch (_) {}
           url = next;
           if (response.status === 303 || ((response.status === 301 || response.status === 302) && requestMethod(requestOptions) === 'POST')) {
             requestOptions = Object.assign({}, requestOptions, { method: 'GET' });

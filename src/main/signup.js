@@ -127,7 +127,7 @@ async function checkUsername(username, birthday) {
       + encodeURIComponent(String(username).trim())
       + '&birthday=' + encodeURIComponent(String(birthday).trim());
     const res = await fetchWithPolicy(url, {
-      headers: { 'User-Agent': 'SUNDAY-Launcher/1.8.17', 'Accept': 'application/json' },
+      headers: { 'User-Agent': 'SUNDAY-Launcher/1.8.18', 'Accept': 'application/json' },
       signal: AbortSignal.timeout(8000),
     }, 'robloxApi');
     if (res.status === 429) return { ok: true, available: null, message: 'Roblox is rate-limiting checks — it will validate the name at sign-up.' };

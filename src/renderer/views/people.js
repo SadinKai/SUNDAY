@@ -1,6 +1,7 @@
 'use strict';
 
 /* ----------------------------- People view ----------------------------- */
+const PEOPLE_REFRESH_TTL_MS = 2 * 60 * 1000;
 views.people = function () {
   if (state.people.route === 'friends') return renderFriendsPage();
   if (state.people.route === 'profile') return renderPeopleProfile();
@@ -185,16 +186,21 @@ function renderFriendsPage() {
       if (e.key === 'Enter') { e.preventDefault(); filterInp.blur(); }
     });
   }
-  if (!pp.loaded && !pp.loading) loadPeople(0);
-  else renderPeopleGrid();
+  if (!pp.loaded && !pp.loading) loadPeople(0, false);
+  else {
+    renderPeopleGrid();
+    if (!pp.loading && !pp.error && Number(pp.refreshedAt) > 0
+        && Date.now() - Number(pp.refreshedAt) >= PEOPLE_REFRESH_TTL_MS) loadPeople(pp.page, true);
+  }
 }
 
 function renderPeopleGrid() {
   const grid = $('#people-grid');
   if (!grid) return;
   const pp = state.people;
-  if (pp.loading) { grid.innerHTML = `<div class="games-end"><span class="spinner dark"></span> Loading people…</div>`; return; }
-  if (pp.error) { grid.innerHTML = `<div class="games-end">${esc(pp.error)}</div>`; return; }
+  grid.setAttribute('aria-busy', String(!!pp.loading));
+  if (pp.loading && !pp.list.length) { grid.innerHTML = `<div class="games-end"><span class="spinner dark"></span> Loading people…</div>`; return; }
+  if (pp.error && !pp.list.length) { grid.innerHTML = `<div class="games-end">${esc(pp.error)}</div>`; return; }
   if (!pp.list.length) { grid.innerHTML = `<div class="card"><div class="empty"><div class="e-ico">${icon('users-group')}</div><h3>No people to show</h3><p>Add an account with friends to populate this list.</p></div></div>`; return; }
   const list = visiblePeople(pp.list);
   grid.innerHTML = list.length
@@ -202,34 +208,25 @@ function renderPeopleGrid() {
     : `<div class="games-end">${pp.filterText ? `No one here matches “${esc(pp.filterText)}”.` : 'No one matches this filter.'}</div>`;
 }
 
-async function loadPeople(page) {
+async function loadPeople(page, force) {
   const pp = state.people;
+  if (pp.loading) return;
   const rid = ++pp.requestId;
   pp.loading = true; pp.error = null;
   if (state.view === 'people' && pp.route === 'friends') renderPeopleGrid();
-  const r = await call(() => api.people.list(page, pp.pageSize, false));
+  const r = await call(() => api.people.list(page, pp.pageSize, force === true));
   if (rid !== pp.requestId) return; // a newer page load superseded this one
   pp.loading = false; pp.loaded = true;
   if (r && r.ok) {
-    pp.list = r.people; pp.page = r.page; pp.total = r.total; pp.hasNext = r.hasNext; pp.hasPrev = r.hasPrev;
+    pp.list = r.people; pp.page = r.page; pp.total = r.total; pp.hasNext = r.hasNext; pp.hasPrev = r.hasPrev; pp.refreshedAt = Date.now();
   } else {
-    pp.list = []; pp.error = (r && r.error) || 'People could not be loaded.';
+    pp.error = (r && r.error) || 'People could not be loaded.';
   }
   if (state.view === 'people' && pp.route === 'friends') views.people();
 }
 
 async function refreshPeople() {
-  const pp = state.people;
-  const rid = ++pp.requestId;
-  pp.loading = true; pp.error = null;
-  renderPeopleGrid();
-  const r = await call(() => api.people.list(pp.page, pp.pageSize, true));
-  if (rid !== pp.requestId) return; // a newer load superseded this refresh
-  pp.loading = false; pp.loaded = true;
-  if (r && r.ok) {
-    pp.list = r.people; pp.page = r.page; pp.total = r.total; pp.hasNext = r.hasNext; pp.hasPrev = r.hasPrev;
-  } else pp.error = (r && r.error) || 'Friends could not be loaded.';
-  if (state.view === 'people' && pp.route === 'friends') views.people();
+  return loadPeople(state.people.page, true);
 }
 
 function renderPeopleSearchResults() {
@@ -480,12 +477,14 @@ function renderPeopleProfile() {
 async function openPerson(userId) {
   const id = Number(userId);
   if (!id) return;
+  const requestId = Number(state.people.detail && state.people.detail.requestId || 0) + 1;
   state.people.returnRoute = state.people.route === 'friends' ? 'friends' : 'home';
   state.people.route = 'profile';
-  state.people.detail = { userId: id, profile: null, loading: true, error: null };
+  state.people.detail = { userId: id, profile: null, loading: true, error: null, requestId };
   views.people();
   const r = await call(() => api.people.profile(id));
-  if (state.people.detail.userId !== id) return;
+  if (state.people.route !== 'profile' || state.people.detail.userId !== id
+      || state.people.detail.requestId !== requestId) return;
   state.people.detail.loading = false;
   if (r && r.ok) state.people.detail.profile = r.profile;
   else state.people.detail.error = (r && r.error) || 'This profile could not be loaded.';

@@ -120,9 +120,28 @@ saved preference requires a controlled application restart. Diagnostics records
 whether the saved setting or environment override selected it.
 
 The legacy adapter retains the established singleton handling, clone builder,
-tree validation, three-slot allocator, `RELEASED_BUT_BUSY` behavior, ownership
-capabilities, cleanup, and restart rules. Generated clone paths are validated
-before spawn, and no broad foreign-process cleanup is available.
+tree validation, `RELEASED_BUT_BUSY` behavior, ownership capabilities, cleanup,
+and restart rules. Its logical allocator permits six managed clients and keeps
+bounded physical slot headroom for released-but-still-mapped histories.
+Generated clone paths are validated before spawn, and no broad foreign-process
+cleanup is available.
+
+Non-secret ownership evidence is stored separately from launch plans. On an
+application restart, a client is restored only when PID, Windows process
+creation identity, canonical executable path, executable file identity, slot,
+account, and operation still agree. Opaque process-control capabilities are
+never persisted; a matching restored process receives a newly issued in-memory
+capability. Observation alone remains insufficient for adoption.
+
+The ownership records use a new additive namespace in the existing generic
+transactional state database, so v1.8.18 does not rewrite account, setting,
+log, or session schemas. Unknown non-secret ownership fields are preserved for
+forward compatibility; credential- or capability-shaped fields are discarded.
+Existing v1.8.17 plans, participant arrays, history, and slot directories remain
+readable without a destructive migration. A plan that was still RUNNING before
+the upgrade is rebound only when the new exact ownership evidence matches; if
+that evidence is unavailable, the operation is marked UNKNOWN for explicit
+reconciliation rather than silently adopting or terminating a process.
 
 Microsoft Store / AppX installations are discovered dynamically using Windows
 package registration, manifest, application ID, and actual InstallLocation
@@ -140,7 +159,7 @@ general-purpose remote navigation channel.
 ## Update and release trust
 
 The release-trust code can validate signed canonical manifests with monotonic
-sequence, publisher, key identifier, and artifact digests. The v1.8.17
+sequence, publisher, key identifier, and artifact digests. The v1.8.18
 assets are intentionally unsigned and are distributed with SHA-256 checksums.
 The update coordinator cannot apply downloaded code merely because a public key
 exists. In-application update application remains unavailable until

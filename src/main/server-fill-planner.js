@@ -1,5 +1,7 @@
 'use strict';
 
+const { MAX_LEGACY_MANAGED_CLIENTS } = require('./legacy-capacity');
+
 function uniqueAccountIds(input) {
   return Array.from(new Set((Array.isArray(input) ? input : [])
     .map(value => String(value || '').trim())
@@ -16,7 +18,9 @@ function planServerFill(options) {
   const opts = options || {};
   const accountIds = uniqueAccountIds(opts.accountIds);
   if (!accountIds.length) return { ok: false, error: 'Choose at least one account.', assignments: [] };
-  if (accountIds.length > 3) return { ok: false, error: 'SUNDAY Launcher launch plans support at most 3 accounts.', assignments: [] };
+  if (accountIds.length > MAX_LEGACY_MANAGED_CLIENTS) {
+    return { ok: false, error: `SUNDAY Launcher launch plans support at most ${MAX_LEGACY_MANAGED_CLIENTS} accounts.`, assignments: [] };
+  }
 
   const servers = (Array.isArray(opts.servers) ? opts.servers : [])
     .filter(server => server && String(server.id || '').trim() && freeSlots(server) > 0)

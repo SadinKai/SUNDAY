@@ -58,7 +58,7 @@ function renderFollowDialog() {
   if (!target) { closeFollowDialog(); return; }
   const followers = state.accounts.filter(a => a.id !== target.id);
   const chips = followers.map(a => `
-    <button type="button" class="chip ${state.followSelected.has(a.id) ? 'on' : ''}" data-action="toggle-follow-account" data-id="${a.id}" aria-pressed="${state.followSelected.has(a.id)}" ${state.following ? 'disabled' : ''}>
+    <button type="button" class="chip ${state.followSelected.has(a.id) ? 'on' : ''}" data-action="toggle-follow-account" data-id="${safeAttr(a.id)}" aria-pressed="${state.followSelected.has(a.id)}" ${state.following ? 'disabled' : ''}>
       ${a.avatar ? `<img src="${esc(a.avatar)}" alt="">` : icon('users')}<span>${esc(a.displayName || a.username)}</span>
     </button>`).join('');
   const count = state.followSelected.size;
@@ -415,7 +415,7 @@ function renderPersonJoinDialog() {
   }).join('');
   const n = join.selectedIds.size;
   openModal(`
-    <div class="m-head"><h3>Join ${esc(join.name || 'player')}</h3><p>Pick ${legacyCompatibilityMode() ? 'up to three accounts' : 'one account'}. SUNDAY creates a fresh exact-target launch for each selected account.</p></div>
+    <div class="m-head"><h3>Join ${esc(join.name || 'player')}</h3><p>Pick ${legacyCompatibilityMode() ? `up to ${legacyManagedClientLimit()} accounts` : 'one account'}. SUNDAY creates a fresh exact-target launch for each selected account.</p></div>
     <div class="m-body">
       <div class="join-account-list">${choices}</div>
       <p class="hint" style="margin:13px 0 0">Exact live-server joining is available only while client launching is active. Private or privacy-restricted servers can still block a join.</p>

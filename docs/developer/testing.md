@@ -51,7 +51,7 @@ npm run test:release-manifest
 ```
 
 Packaging tests inspect naming, architecture, version resources, expected
-payloads, archive safety, manifest behavior, and byte identity. The v1.8.17
+payloads, archive safety, manifest behavior, and byte identity. The v1.8.18
 assets are intentionally unsigned; a locally rebuilt artifact is still
 not evidence about the bytes published on GitHub.
 
@@ -84,10 +84,13 @@ They are never part of CI or a normal build.
 Release qualification starts the exact candidate without `LEGACY_COMPAT` and
 with a fresh temporary profile. It must prove that a missing preference selects
 the legacy adapter by default without spawning Roblox automatically. With the
-authorized saved-account profile it then exercises one and exactly three live
-clients, focus, stop, restart while siblings remain, slot reuse, teardown, clone
-cleanup, explicit disable/restart to the unavailable adapter, and the exact
-environment override. The environment-override drivers remain
+authorized saved-account profile it then exercises one client, bulk six, and
+incremental A+B then C, D, E, and F through the real packaged UI. It verifies
+selection clearing, six distinct responsive `WINDOWSCLIENT` processes,
+application restart recovery with all six alive, clean seventh-launch
+rejection, focus, exact stop/restart while siblings remain, slot reuse,
+teardown, clone cleanup, explicit disable/restart to the unavailable adapter,
+and the exact environment override. The environment-override drivers remain
 backward-compatibility checks; they do not substitute for the default
 Settings-based packaged test.
 
@@ -101,7 +104,11 @@ Remove-Item Env:LEGACY_COMPAT -ErrorAction SilentlyContinue
 npm run test:legacy-settings-packaged
 ```
 
-It writes a sanitized result to
+By default it requires six distinct non-expired saved accounts. For a bounded
+qualification, set `SUNDAY_LIVE_QUALIFICATION_CLIENTS` to the number of
+authorized accounts available (for example, `4`). The report records that
+count, and any release using the evidence must disclose that the unexercised
+capacity was not live-qualified. It writes a sanitized result to
 `artifacts/settings-live-qualification-v<VERSION>.json`. Account identifiers,
 session material, and opaque capabilities are not included in that report.
 

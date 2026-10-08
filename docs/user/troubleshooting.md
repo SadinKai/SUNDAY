@@ -55,7 +55,7 @@ WindowsApps permissions or copy package contents.
 
 ## Clipboard permission prompt
 
-v1.8.17 no longer reads the clipboard when SUNDAY opens, gains focus, or enters
+v1.8.18 does not read the clipboard when SUNDAY opens, gains focus, or enters
 Launch. Select **Paste Roblox Link** when you intentionally want to import a
 link. The bounded native Windows read happens only after that click and does
 not require the WebView clipboard-read permission. Invalid text is ignored with
@@ -75,6 +75,14 @@ uses hard-linked content. SUNDAY should allocate another available slot and
 reclaim the busy slot only after ownership evidence clears. Do not terminate
 foreign Roblox processes to force reuse.
 
+## Capacity says six clients are already managed
+
+Six concurrent SUNDAY-managed clients is the intentional logical ceiling. Stop
+one owned client and wait for Diagnostics to show available capacity before
+launching another. Do not delete clone folders or terminate an unrelated
+Roblox process. A released slot can remain busy temporarily; SUNDAY will use
+its bounded physical headroom when another proven-safe slot is available.
+
 ## Sign-in expired
 
 Use **Sign in again** for the affected account. Never paste a cookie into a log,
@@ -82,7 +90,7 @@ issue, fixture, or configuration file.
 
 ## Windows SmartScreen shows a warning
 
-The v1.8.17 installer and portable application are intentionally
+The v1.8.18 installer and portable application are intentionally
 unsigned. Download only from the canonical
 [Releases page](https://github.com/SadinKai/SUNDAY/releases) and compare the
 file's SHA-256 hash with the published `SHA256SUMS.txt`. A matching checksum
@@ -90,7 +98,7 @@ confirms byte integrity; it is not a publisher signature.
 
 ## Automatic updates are unavailable
 
-Automatic update installation is not active in v1.8.17. Use **View releases**
+Automatic update installation is not active in v1.8.18. Use **View releases**
 to open the canonical Releases page and download updates manually. SUNDAY does
 not claim that an unavailable updater installed anything.
 

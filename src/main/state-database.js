@@ -224,6 +224,22 @@ class StateDatabase {
     }
     return target;
   }
+
+  compact() {
+    this.assertOwner();
+    if (this.transactionDepth > 0) {
+      throw stateError('ESTATETRANSACTION', 'State compaction cannot run inside a transaction.');
+    }
+    this.fault('before-compact');
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    this.db.exec('VACUUM;');
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    const result = this.db.prepare('PRAGMA quick_check;').get();
+    if (!result || String(result.quick_check) !== 'ok') {
+      throw stateError('ESTATECORRUPT', 'SQLite quick_check failed after compaction.');
+    }
+    return true;
+  }
 }
 
 module.exports = { StateDatabase, SCHEMA_VERSION, stateError };

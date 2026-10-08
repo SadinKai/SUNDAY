@@ -119,10 +119,15 @@ async function list() {
 }
 
 /** tasklist-based fallback used only when the native FFI is unavailable. */
-async function tasklistList() {
-  const { err, stdout } = await run(TASKLIST,
+async function tasklistList(runCommand) {
+  const execute = typeof runCommand === 'function' ? runCommand : run;
+  const { err, stdout } = await execute(TASKLIST,
     ['/FI', `IMAGENAME eq ${PLAYER_IMAGE}`, '/FO', 'CSV', '/NH'], 10000);
-  if (err) return [];
+  if (err) {
+    const error = new Error('Windows process enumeration failed.');
+    error.code = 'EPROCESSOBSERVATION';
+    throw error;
+  }
   if (/No tasks are running/i.test(stdout)) return [];
   const base = [];
   for (const line of stdout.split(/\r?\n/).filter(l => l.trim().startsWith('"'))) {
@@ -160,4 +165,7 @@ async function cleanupAll() {
   return { ok: false, reason: 'Broad process cleanup is disabled.' };
 }
 
-module.exports = { list, terminateOwned, focusOwned, kill, killAllPlayers, cleanupAll, inspectRobloxPath, PLAYER_IMAGE, CRASH_IMAGE };
+module.exports = {
+  list, terminateOwned, focusOwned, kill, killAllPlayers, cleanupAll, inspectRobloxPath, PLAYER_IMAGE, CRASH_IMAGE,
+  __test: { tasklistList },
+};

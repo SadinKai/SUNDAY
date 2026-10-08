@@ -88,10 +88,14 @@ test('legacy compatibility remains bounded, exactly selected, and has no broad p
   const backend = read('src/main/tauri-backend.js');
   const rust = read('src-tauri/src/lib.rs');
   const renderer = rendererJavaScript();
+  const capacity = read('src/main/legacy-capacity.js');
   assert.match(selector, /LEGACY_COMPAT === '1'/);
   assert.match(legacy, /class LegacyRobloxIsolationAdapter/);
   assert.match(legacy, /LEGACY CROSS-PROCESS COMPATIBILITY ACTION/);
-  assert.match(legacy, /instance-\$\{index\}/);
+  assert.match(capacity, /MAX_LEGACY_MANAGED_CLIENTS = 6/);
+  assert.match(capacity, /MAX_LEGACY_PHYSICAL_SLOTS = MAX_LEGACY_MANAGED_CLIENTS/);
+  assert.match(legacy, /instance-\$\{index \+ 1\}/);
+  assert.match(backend, /legacyManagedClients: capacity/);
   assert.match(legacy, /processCapabilities\.authorize\(capability, 'stop', this\.ownerId\)/);
   assert.match(legacyNative, /ROBLOX_singletonEvent/);
   assert.match(legacyNative, /ROBLOX_singletonMutex/);
@@ -180,6 +184,14 @@ test('remote fetch is centralized in the bounded policy module', () => {
     assert.doesNotMatch(source, /\bfetch\s*\(/);
     assert.match(source, /fetchWithPolicy/);
   }
+});
+
+test('People aggregation has one production implementation', () => {
+  const backend = read('src/main/tauri-backend.js');
+  const accounts = read('src/main/accounts.js');
+  assert.match(backend, /async people_list\(payload\) \{ return people\.listFriends/);
+  assert.doesNotMatch(accounts, /async function (?:people|loadFriends|fetchFriends)\b/);
+  assert.doesNotMatch(accounts, /\bpeople, loadFriends\b/);
 });
 
 test('account-creation profile defaults are session-only', () => {
@@ -344,7 +356,7 @@ test('current package, install, shortcut, and launch paths use Sunday.exe', () =
   assert.match(payload, /\["sunday\.exe", "node\.exe", "uninstall\.exe"\]/);
 });
 
-test('v1.8.17 release qualification uses packaged real-Windows launch gates, not provider qualification', () => {
+test('v1.8.18 release qualification uses packaged real-Windows launch gates, not provider qualification', () => {
   const packageJson = JSON.parse(read('package.json'));
   const release = read('docs/developer/release.md');
   const workflow = read('.github/workflows/build-installer.yml');
@@ -358,13 +370,14 @@ test('v1.8.17 release qualification uses packaged real-Windows launch gates, not
   assert.doesNotMatch(smoke, /SUNDAY_ISOLATED_VM/);
 });
 
-test('live packaged launch qualification is explicit, guarded, and credential silent', () => {
+test('live packaged launch qualification is explicit, six-client, guarded, and credential silent', () => {
   const packageJson = JSON.parse(read('package.json'));
   const legacy = read('scripts/qualify-settings-live.mjs');
   assert.equal(packageJson.scripts['test:singleclient-packaged-live'], undefined);
   assert.equal(fs.existsSync(path.join(root, 'scripts', 'qualify-singleclient-live.mjs')), false);
   assert.match(legacy.slice(0, 2500), /SUNDAY_LIVE_SETTINGS_QUALIFICATION !== '1'/);
-  assert.match(legacy, /selectedAccountIds = accountIds\.slice\(0, 3\)/);
+  assert.match(legacy, /MAX_LEGACY_MANAGED_CLIENTS/);
+  assert.doesNotMatch(legacy, /slice\(0, 3\)|\^instance-\[1-3\]/);
   assert.match(legacy, /LegacyRobloxIsolationAdapter/);
   assert.match(legacy, /UnavailableRobloxIsolationAdapter/);
   assert.match(legacy, /window\.sunday\.settings\.save\(\{ multiInstanceMode: true \}\)/);

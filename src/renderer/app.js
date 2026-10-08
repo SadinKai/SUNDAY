@@ -7,17 +7,6 @@
       <div class="b-text"><b>SUNDAY Launcher bridge unavailable</b><span>Open this through the SUNDAY Launcher application, not a browser.</span></div></div></div>`;
     return;
   }
-  // Independent boot calls run together and each has a timeout, so one broken
-  // subsystem can no longer leave users staring at the splash forever.
-  await Promise.all([refreshStatus(), loadInstances(), loadAccounts(), loadWatchdog(), loadLaunchPlans()]);
-  // The last self-update leaves a one-shot result: tell the user it worked
-  // (or why it didn't) instead of the update failing silently after close.
-  const lastUpdate = state.status && state.status.lastUpdateResult;
-  if (lastUpdate) {
-    if (lastUpdate.ok) toast(`SUNDAY Launcher updated to v${lastUpdate.to || 'the latest version'}`, 'good');
-    else toast(`Update failed: ${lastUpdate.error || 'unknown error'} - try again from Settings`, 'bad');
-  }
-  state.launchMode = state.accounts.length ? 'account' : 'plain';
   // Reopen the section the user last visited (validated against the nav).
   let startView = 'instances';
   try {
@@ -25,4 +14,24 @@
     if (saved && document.querySelector(`.nav button[data-view="${saved}"]`)) startView = saved;
   } catch (_) { /* fresh profile */ }
   setView(startView);
+
+  // Render first, then hydrate local state. Roblox discovery performs strict
+  // signature and AppX checks and must never hold the initial page hostage.
+  await Promise.all([loadInstances(), loadAccounts(), loadWatchdog(), loadLaunchPlans()]);
+  state.launchMode = state.accounts.length ? 'account' : 'plain';
+  if (state.view === 'instances' || state.view === 'accounts') views[state.view]();
+
+  // Detection remains authoritative, but it runs only after local content is
+  // available. Patch readiness in place so a late result cannot erase input.
+  await refreshStatus();
+  state.statusLoading = false;
+  if (state.view === 'instances') updateLaunchRuntimeStatus();
+
+  // The last self-update leaves a one-shot result: tell the user it worked
+  // (or why it didn't) instead of the update failing silently after close.
+  const lastUpdate = state.status && state.status.lastUpdateResult;
+  if (lastUpdate) {
+    if (lastUpdate.ok) toast(`SUNDAY Launcher updated to v${lastUpdate.to || 'the latest version'}`, 'good');
+    else toast(`Update failed: ${lastUpdate.error || 'unknown error'} - try again from Settings`, 'bad');
+  }
 })();

@@ -19,7 +19,30 @@ const SERVER_FETCH_TIMEOUT_MS = 12000;
 const fetchRoblox = (url, options) => fetchWithPolicy(url, options, 'robloxApi');
 
 let logger = { info() {}, warn() {}, error() {} };
+const RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000;
+const RESPONSE_CACHE_MAX = 50;
+const responseCache = new Map();
+const inFlight = new Map();
 function configure(opts) { if (opts && opts.logger) logger = opts.logger; }
+
+function remember(key, value) {
+  while (responseCache.size >= RESPONSE_CACHE_MAX) responseCache.delete(responseCache.keys().next().value);
+  responseCache.set(key, { at: Date.now(), value });
+}
+
+function sharedRequest(key, force, load) {
+  const cached = responseCache.get(key);
+  if (!force && cached && Date.now() - cached.at < RESPONSE_CACHE_TTL_MS) {
+    return Promise.resolve(Object.assign({}, cached.value, { cached: true }));
+  }
+  if (inFlight.has(key)) return inFlight.get(key);
+  const request = Promise.resolve().then(load).then(value => {
+    if (value && value.ok) remember(key, value);
+    return value;
+  }).finally(() => inFlight.delete(key));
+  inFlight.set(key, request);
+  return request;
+}
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
 
@@ -101,8 +124,10 @@ async function withDetails(games) {
 }
 
 /** Popular experiences (no query). */
-async function browse() {
-  try {
+async function browse(options) {
+  const force = !!(options && options.force);
+  return sharedRequest('browse', force, async () => {
+    try {
     const r = await fetchRoblox(`https://apis.roblox.com/explore-api/v1/get-sorts?sessionId=${uuid()}`, { headers: { Accept: 'application/json' } });
     if (r.status === 429) return { ok: false, error: 'Roblox is rate-limiting — try again shortly.' };
     if (!r.ok) return { ok: false, error: 'Discovery unavailable (HTTP ' + r.status + ').' };
@@ -129,17 +154,20 @@ async function browse() {
     await Promise.all([withThumbnails(games), withDetails(games)]);
     logger.info('Games browse: ' + games.length + ' experiences, ' + categories.length + ' categories');
     return { ok: true, games, categories, nextPageToken: null };
-  } catch (err) {
-    logger.warn('Games browse failed', err && err.message);
-    return { ok: false, error: (err && err.message) || 'Network error.' };
-  }
+    } catch (err) {
+      logger.warn('Games browse failed', err && err.message);
+      return { ok: false, error: (err && err.message) || 'Network error.' };
+    }
+  });
 }
 
 /** Keyword search with pagination (omni-search nextPageToken). */
 async function search(query, pageToken) {
   const q = (query || '').trim();
   if (!q) return browse();
-  try {
+  const key = `search:${q.toLowerCase()}|${String(pageToken || '')}`;
+  return sharedRequest(key, false, async () => {
+    try {
     const u = new URL('https://apis.roblox.com/search-api/omni-search');
     u.searchParams.set('searchQuery', q);
     u.searchParams.set('sessionId', uuid());
@@ -156,10 +184,11 @@ async function search(query, pageToken) {
     games = dedupe(games);
     await Promise.all([withThumbnails(games), withDetails(games)]);
     return { ok: true, games, nextPageToken: j.nextPageToken || null };
-  } catch (err) {
-    logger.warn('Games search failed', err && err.message);
-    return { ok: false, error: (err && err.message) || 'Network error.' };
-  }
+    } catch (err) {
+      logger.warn('Games search failed', err && err.message);
+      return { ok: false, error: (err && err.message) || 'Network error.' };
+    }
+  });
 }
 
 async function serversPage(pid, sortOrder, cursor, excludeFullGames) {
@@ -289,4 +318,8 @@ async function servers(placeId, cursor) {
   }
 }
 
-module.exports = { configure, browse, search, servers, scanServers, normalizedServer, withDetails };
+module.exports = {
+  configure, browse, search, servers, scanServers, normalizedServer, withDetails,
+  // Deterministic cache policy coverage without exposing cached response data.
+  __test: { sharedRequest, RESPONSE_CACHE_MAX, RESPONSE_CACHE_TTL_MS },
+};

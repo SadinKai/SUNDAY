@@ -135,13 +135,42 @@ test('launch cancellation revokes and destroys an in-flight environment', async 
     }
     await f.coordinator.cancel(planId);
     const cancelled = await pending;
-    assert.equal(cancelled.plan.state, 'CANCELLED');
+    assert.equal(cancelled.plan.state, 'CANCELLED', JSON.stringify(cancelled, null, 2));
     await new Promise(resolve => setTimeout(resolve, 25));
     const environmentId = cancelled.plan.operations[0].environmentId;
     const record = f.provider.environments.get(environmentId);
     assert.equal(record.destroyed, true);
     assert.equal(f.broker.leases.list()[0].state, 'REVOKED');
   } finally { await f.cleanup(); }
+});
+
+test('launch cancellation requires recovery when broker-owned destruction is unconfirmed', async () => {
+  const f = fixture('sunday-phase6-cancel-cleanup-', { hangLaunchOrders: [1] }, { operationTimeoutMs: 5000 });
+  const originalDestroy = f.provider.destroy.bind(f.provider);
+  try {
+    f.provider.destroy = async () => ({
+      ok: false,
+      state: 'FAILED',
+      destroyed: false,
+      reason: 'Injected broker destruction failure.',
+    });
+    let planId = null;
+    f.coordinator.on('update', plan => { planId = planId || plan.planId; });
+    const pending = f.coordinator.prepare(request(1));
+    while (!planId || !f.coordinator.active.has(planId)
+      || f.coordinator.get(planId).operations[0].state !== 'LAUNCHING') {
+      await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    await f.coordinator.cancel(planId);
+    const cancelled = await pending;
+    assert.equal(cancelled.plan.state, 'RECOVERY_REQUIRED');
+    assert.equal(cancelled.plan.operations[0].state, 'UNKNOWN');
+    assert.equal(cancelled.plan.operations[0].failureCode, 'CLEANUP_UNCONFIRMED');
+    assert.equal(f.broker.leases.list()[0].state, 'REVOKED');
+  } finally {
+    f.provider.destroy = originalDestroy;
+    await f.cleanup();
+  }
 });
 
 test('close-one and restart-one preserve the independent sibling environment', async () => {

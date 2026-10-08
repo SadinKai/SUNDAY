@@ -907,7 +907,7 @@ async fn accounts_create(
 backend_command!(accounts_remove, "accounts_remove", (id: Option<String>), json!({ "id": id }));
 backend_command!(accounts_refresh, "accounts_refresh", (id: Option<String>, full: Option<bool>), json!({ "id": id, "full": full }));
 backend_command!(accounts_follow, "accounts_follow", (target_account_id: Option<String>, follower_account_ids: Vec<String>), json!({ "targetAccountId": target_account_id, "followerAccountIds": follower_account_ids }));
-backend_command!(games_browse, "games_browse", (), Value::Null);
+backend_command!(games_browse, "games_browse", (force: Option<bool>), json!({ "force": force }));
 backend_command!(games_search, "games_search", (query: Option<String>, page_token: Option<String>), json!({ "query": query, "pageToken": page_token }));
 backend_command!(games_servers, "games_servers", (place_id: Option<String>, cursor: Option<String>), json!({ "placeId": place_id, "cursor": cursor }));
 backend_command!(games_server_scan, "games_server_scan", (place_id: Option<String>, page_limit: Option<usize>), json!({ "placeId": place_id, "pageLimit": page_limit }));

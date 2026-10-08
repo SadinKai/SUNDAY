@@ -1,16 +1,16 @@
 # Release engineering
 
-SUNDAY v1.8.17 uses a straightforward unsigned GitHub release. A successful
+SUNDAY v1.8.18 uses a straightforward unsigned GitHub release. A successful
 source build is not public until the exact audited files are uploaded and their
 published checksums are verified.
 
 ## Canonical version and public files
 
-Version `1.8.17` is declared in `package.json`, both Cargo manifests, and
+Version `1.8.18` is declared in `package.json`, both Cargo manifests, and
 `src-tauri/tauri.conf.json`. The public release contains only:
 
 - `SundayInstaller.exe`;
-- `SundayPortable_1.8.17_x64.zip`; and
+- `SundayPortable_1.8.18_x64.zip`; and
 - `SHA256SUMS.txt`.
 
 Source archives generated automatically by GitHub are not SUNDAY build
@@ -49,17 +49,23 @@ npm run test:legacy-settings-packaged
 ```
 
 The report is local, sanitized qualification evidence and is never packaged as
-a public asset. It must prove fresh-profile default activation without
-`LEGACY_COMPAT`, one and three legacy clients, restart, sibling preservation,
-slot reuse, teardown, clone cleanup, explicit disable/restart, and exact
-environment-override behavior. A successful local run does not identify the
-cause of a different machine's failure without that machine's sanitized
-diagnostics or forensic stage data.
+a public asset. The default full-capacity run proves fresh-profile default
+activation without `LEGACY_COMPAT`, one client, bulk six, incremental A+B then
+C through F, selection clearing, six responsive clients, application restart
+with all six alive, clean seventh-launch rejection, exact restart, sibling
+preservation, slot reuse, teardown, clone cleanup, explicit disable/restart,
+and exact environment-override behavior. A controlled partial run may set
+`SUNDAY_LIVE_QUALIFICATION_CLIENTS` (for example, to `4`) to qualify only the
+authorized accounts available. A release using that evidence must state the
+exact live-qualified count and must not claim that the remaining capacity was
+live-qualified. A successful local run does not identify the cause of a
+different machine's failure without that machine's sanitized diagnostics or
+forensic stage data.
 
 The multi-instance release gate is the existing Settings-selected
 `LegacyRobloxIsolationAdapter` running its bounded clone, native singleton,
 slot-ownership, capability, and cleanup path on real Windows. Provider research
-and environment-broker qualification are not part of the v1.8.17 shipping or
+and environment-broker qualification are not part of the v1.8.18 shipping or
 publication path.
 
 The exact packaged candidate must inspect registered AppX/MSIX metadata on the
@@ -74,7 +80,7 @@ observation.
 
 ## Unsigned initial binaries
 
-The v1.8.17 Windows binaries are intentionally unsigned. Windows
+The v1.8.18 Windows binaries are intentionally unsigned. Windows
 SmartScreen may display a warning when the installer or application starts.
 Do not claim publisher identity, fabricate signatures, or bypass Windows
 security warnings.
@@ -89,5 +95,5 @@ an embedded release publisher retain the stricter Authenticode path.
 
 ## Update status
 
-Automatic update application remains unavailable. Users download v1.8.17 from
+Automatic update application remains unavailable. Users download v1.8.18 from
 the canonical GitHub Releases page.

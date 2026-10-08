@@ -73,5 +73,26 @@
     return sessions.slice(0, 100);
   }
 
-  return { parseRobloxTarget, normalizeThemePreference, normalizeSessions };
+  function managedClientCapacity(status, legacyMode) {
+    if (!legacyMode) return 1;
+    const value = Number(status && status.legacyManagedClients && status.legacyManagedClients.maxConcurrent);
+    return Number.isInteger(value) && value > 0 ? value : 1;
+  }
+
+  function selectionAfterLaunch(selectedIds, response) {
+    const next = new Set(Array.from(selectedIds || []).map(value => String(value)));
+    if (!(response && Array.isArray(response.results))) return Array.from(next);
+    for (const result of response.results) {
+      if (result && result.ok === true && result.accountId != null) next.delete(String(result.accountId));
+    }
+    return Array.from(next);
+  }
+
+  return {
+    managedClientCapacity,
+    normalizeSessions,
+    normalizeThemePreference,
+    parseRobloxTarget,
+    selectionAfterLaunch,
+  };
 });

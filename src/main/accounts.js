@@ -27,6 +27,7 @@ let logger = { info() {}, warn() {}, error() {} };
 let database = null;
 let ownsDatabase = false;
 let legacyArchive = null;
+let migratedBeforeFirstCommit = 0;
 
 function configure(opts) {
   baseDir = opts.baseDir;
@@ -42,6 +43,7 @@ function configure(opts) {
   });
   ownsDatabase = !opts.database;
   legacyArchive = null;
+  migratedBeforeFirstCommit = 0;
   try { migrateLegacyCredentials(); }
   catch (err) { logger.warn('Legacy credential migration paused', err && err.message); }
 }
@@ -82,15 +84,16 @@ function readRaw() {
       ? (parsed.schemaVersion === 1 ? parsed.data : null)
       : parsed;
     if (!Array.isArray(list)) throw new Error('Unsupported or malformed account schema.');
-    database.put('documents', 'accounts.json', list, { expectedRevision: 0 });
-    legacyArchive = `${p}.migrated.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
-    try { fs.renameSync(p, legacyArchive); }
-    catch (error) {
-      logger.warn('Account migration committed but the legacy source could not be archived', error.message);
-      legacyArchive = p;
-    }
-    return list;
+    const protectedLegacy = protectLegacyCredentials(list);
+    database.put('documents', 'accounts.json', protectedLegacy.list, { expectedRevision: 0 });
+    migratedBeforeFirstCommit += protectedLegacy.migrated;
+    // The caller owns the surrounding transaction. Leave the recoverable
+    // legacy source in place until that transaction commits and the database
+    // has passed compaction/integrity verification.
+    legacyArchive = p;
+    return protectedLegacy.list;
   } catch (err) {
+    if (err && err.code === 'EACCOUNTSECURE') throw err;
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const quarantine = `${p}.corrupt.${stamp}.${crypto.randomBytes(4).toString('hex')}`;
     try {
@@ -157,51 +160,106 @@ function decryptCookie(stored) {
   return null;
 }
 
-function migrateLegacyCredentials() {
-  if (!safeStorage || !safeStorage.isEncryptionAvailable()) return { migrated: 0 };
-  let migrated = 0;
-  while (true) {
-    let changed = false;
-    withLock(() => {
-      const list = readRaw();
-      const index = list.findIndex(a => a && typeof a.cookie === 'string' && a.cookie.startsWith('b64:'));
-      if (index < 0) return;
-      const plain = Buffer.from(list[index].cookie.slice(4), 'base64');
-      if (!plain.length) throw new Error('A legacy credential could not be decoded.');
-      try {
-        const encrypted = safeStorage.encryptString(plain);
-        const verify = Buffer.from(safeStorage.decryptString(encrypted), 'utf8');
-        try {
-          if (verify.length !== plain.length || !crypto.timingSafeEqual(verify, plain)) {
-            throw new Error('Migrated credential verification failed.');
-          }
-        } finally {
-          verify.fill(0);
-        }
-        list[index] = Object.assign({}, list[index], {
-          cookie: 'enc:' + encrypted.toString('base64'),
-          revision: (Number(list[index].revision) || 0) + 1,
-        });
-        encrypted.fill(0);
-      } finally {
-        plain.fill(0);
-      }
-      writeRaw(list);
-      changed = true;
-    });
-    if (!changed) break;
-    migrated++;
+function protectLegacyCredentials(input) {
+  const list = Array.isArray(input) ? input : [];
+  const indexes = list.map((record, index) => record && typeof record.cookie === 'string'
+    && record.cookie.startsWith('b64:') ? index : -1).filter(index => index >= 0);
+  if (!indexes.length) return { list, migrated: 0 };
+  if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+    const error = new Error('Secure storage is unavailable. Legacy credentials were left unchanged.');
+    error.code = 'EACCOUNTSECURE';
+    throw error;
   }
-  // Atomic replacement already preserves the previous document until each
-  // migrated record is durable. Do not retain a plaintext-equivalent backup.
-  if (!readRaw().some(a => a && typeof a.cookie === 'string' && a.cookie.startsWith('b64:'))) {
+
+  const next = list.slice();
+  for (const index of indexes) {
+    const encoded = list[index].cookie.slice(4);
+    if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+      throw new Error('A legacy credential could not be decoded.');
+    }
+    const plain = Buffer.from(encoded, 'base64');
+    if (!plain.length) throw new Error('A legacy credential could not be decoded.');
+    let encrypted = null;
     try {
-      if (legacyArchive && fs.existsSync(legacyArchive)) fs.unlinkSync(legacyArchive);
-      legacyArchive = null;
-    } catch (err) {
-      throw new Error(`Legacy credential source could not be removed after verified DPAPI migration: ${err.message}`);
+      try { encrypted = safeStorage.encryptString(plain); }
+      catch (cause) {
+        const error = new Error(`Legacy credential protection failed: ${cause.message}`);
+        error.code = 'EACCOUNTSECURE';
+        throw error;
+      }
+      let verify = null;
+      try {
+        try { verify = Buffer.from(safeStorage.decryptString(encrypted), 'utf8'); }
+        catch (cause) {
+          const error = new Error(`Legacy credential verification failed: ${cause.message}`);
+          error.code = 'EACCOUNTSECURE';
+          throw error;
+        }
+        if (verify.length !== plain.length || !crypto.timingSafeEqual(verify, plain)) {
+          const error = new Error('Migrated credential verification failed.');
+          error.code = 'EACCOUNTSECURE';
+          throw error;
+        }
+      } finally {
+        if (verify) verify.fill(0);
+      }
+      next[index] = Object.assign({}, list[index], {
+        cookie: 'enc:' + encrypted.toString('base64'),
+        revision: (Number(list[index].revision) || 0) + 1,
+      });
+    } finally {
+      plain.fill(0);
+      if (encrypted) encrypted.fill(0);
     }
   }
+  return { list: next, migrated: indexes.length };
+}
+
+function cleanupCoveredLegacySources(current) {
+  const encrypted = new Set((current || []).filter(record => record && /^enc:/.test(String(record.cookie || '')))
+    .map(record => `${String(record.id || '')}|${String(record.userId || '')}`));
+  let names = [];
+  try { names = fs.readdirSync(baseDir); } catch (_) { return; }
+  const failures = [];
+  for (const name of names) {
+    if (name !== 'accounts.json' && !/^accounts\.json\.migrated\..+\.bak$/.test(name)) continue;
+    const target = path.join(baseDir, name);
+    let legacy = [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(target, 'utf8'));
+      const rows = parsed && !Array.isArray(parsed) && Object.prototype.hasOwnProperty.call(parsed, 'schemaVersion')
+        ? parsed.data : parsed;
+      legacy = (Array.isArray(rows) ? rows : []).filter(record => record
+        && typeof record.cookie === 'string' && record.cookie.startsWith('b64:'));
+    } catch (_) { continue; } // Preserve anything that cannot be proven covered.
+    if (!legacy.length || !legacy.every(record => encrypted.has(`${String(record.id || '')}|${String(record.userId || '')}`))) continue;
+    try {
+      fs.unlinkSync(target);
+      if (legacyArchive === target) legacyArchive = null;
+    } catch (_) {
+      failures.push(name);
+    }
+  }
+  if (failures.length) {
+    const error = new Error(`Verified legacy credential source could not be removed (${failures.length} file(s)).`);
+    error.code = 'EACCOUNTSECURE';
+    throw error;
+  }
+}
+
+function migrateLegacyCredentials() {
+  let migrated = 0;
+  let current = [];
+  withLock(() => {
+    current = readRaw();
+    const protectedLegacy = protectLegacyCredentials(current);
+    migrated = migratedBeforeFirstCommit + protectedLegacy.migrated;
+    migratedBeforeFirstCommit = 0;
+    if (protectedLegacy.migrated) writeRaw(protectedLegacy.list);
+    current = protectedLegacy.list;
+  });
+  if (migrated && typeof database.compact === 'function') database.compact();
+  cleanupCoveredLegacySources(current);
   if (migrated) logger.info(`Migrated ${migrated} legacy credential record(s) to DPAPI.`);
   return { migrated, backup: legacyArchive };
 }
@@ -612,7 +670,7 @@ async function fetchProfileExtras(a) {
   if (!id) return;
   const grab = async (url) => {
     try {
-      const res = await fetchRoblox(url, { headers: { 'User-Agent': 'SUNDAY-Launcher/1.8.17', 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
+      const res = await fetchRoblox(url, { headers: { 'User-Agent': 'SUNDAY-Launcher/1.8.18', 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
       return res.ok ? await res.json() : null;
     } catch (_) { return null; }
   };
@@ -678,6 +736,7 @@ async function refresh(id, full) {
 // per account per tick; nothing is re-rendered unless something changed.
 
 let pollTimer = null;
+let pollKickTimer = null;
 let pollBusy = false;
 
 // Robux + Premium per account — refreshed lazily inside the poll loop, at
@@ -781,17 +840,19 @@ function startPolling(opts) {
     }
   };
   pollTimer = setInterval(tick, interval);
-  setTimeout(tick, 800); // first pass shortly after start
+  pollKickTimer = setTimeout(() => {
+    pollKickTimer = null;
+    tick();
+  }, 800); // first pass shortly after start
   logger.info('Presence poller started (' + interval + 'ms)');
 }
 
-function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (pollKickTimer) { clearTimeout(pollKickTimer); pollKickTimer = null; }
+}
 
-/* ----------------------------- People (friends) ----------------------------- */
-
-const FRIENDS_TTL = 5 * 60 * 1000;
-let friendsCache = { list: [], at: 0 };
-const bioCache = new Map();
+/* ----------------------------- Account-backed presence ----------------------------- */
 
 function firstValidCookie() {
   for (const a of readRaw()) {
@@ -799,103 +860,6 @@ function firstValidCookie() {
     if (c) return c;
   }
   return null;
-}
-
-async function fetchFriends(userId) {
-  try {
-    const res = await fetchRoblox(`https://friends.roblox.com/v1/users/${userId}/friends`);
-    if (!res.ok) return [];
-    const j = await res.json();
-    return (j.data || []).map(u => ({ userId: u.id, username: u.name, displayName: u.displayName || u.name }));
-  } catch (_) { return []; }
-}
-
-/** Aggregate, dedupe the friends of every signed-in account. */
-async function loadFriends(force) {
-  if (!force && friendsCache.list.length && Date.now() - friendsCache.at < FRIENDS_TTL) return friendsCache.list;
-  const accounts = readRaw();
-  const own = new Set(accounts.map(a => a.userId));
-  const seen = new Map();
-  for (const a of accounts) {
-    const friends = await fetchFriends(a.userId);
-    for (const f of friends) {
-      if (own.has(f.userId) || seen.has(f.userId)) continue;
-      seen.set(f.userId, f);
-    }
-  }
-  friendsCache = { list: Array.from(seen.values()).sort((a, b) => a.displayName.localeCompare(b.displayName)), at: Date.now() };
-  return friendsCache.list;
-}
-
-async function getAvatarUrls(userIds) {
-  const map = new Map();
-  if (!userIds.length) return map;
-  try {
-    const res = await fetchRoblox(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userIds.join(',')}&size=150x150&format=Png&isCircular=false`);
-    const j = await res.json();
-    for (const d of (j.data || [])) if (d.imageUrl) map.set(d.targetId, d.imageUrl);
-  } catch (_) {}
-  return map;
-}
-
-// users/{id} returns name + displayName + description in one call (the friends
-// list no longer includes names), so this fills all three.
-async function getUserInfo(userId) {
-  if (bioCache.has(userId)) return bioCache.get(userId);
-  let info = { name: '', displayName: '', bio: '' };
-  try {
-    const res = await fetchRoblox(`https://users.roblox.com/v1/users/${userId}`);
-    if (res.ok) {
-      const j = await res.json();
-      info = { name: j.name || '', displayName: j.displayName || j.name || '', bio: (j.description || '').trim() };
-    }
-  } catch (_) {}
-  // Bound the cache so long-running sessions never grow it without limit.
-  while (bioCache.size >= 200) bioCache.delete(bioCache.keys().next().value);
-  bioCache.set(userId, info);
-  return info;
-}
-
-/** Paginated public profiles (friends of your accounts). */
-async function people(page, pageSize) {
-  if (!readRaw().length) return { ok: false, error: 'Add an account to discover people.' };
-  const size = Math.max(1, Math.min(24, pageSize || 9));
-  const p = Math.max(0, page || 0);
-  let all;
-  try { all = await loadFriends(false); } catch (err) { return { ok: false, error: (err && err.message) || 'Could not load people.' }; }
-  const total = all.length;
-  const slice = all.slice(p * size, p * size + size);
-  const ids = slice.map(u => u.userId);
-
-  const cookie = firstValidCookie();
-  const [avatars, presence] = await Promise.all([
-    getAvatarUrls(ids),
-    cookie ? getPresenceBatch(ids, cookie) : Promise.resolve(new Map()),
-  ]);
-  const infos = await Promise.all(ids.map(getUserInfo));
-
-  const peopleOut = slice.map((u, i) => {
-    const pres = presence.get(u.userId) || { status: 'Offline' };
-    const info = infos[i] || {};
-    const game = gameFromPresence(pres);
-    return {
-      userId: u.userId,
-      username: info.name || u.username || String(u.userId),
-      displayName: info.displayName || u.displayName || info.name || String(u.userId),
-      avatar: avatars.get(u.userId) || null,
-      bio: info.bio || '',
-      presence: pres.status || 'Offline',
-      game,
-      canJoin: pres.status === 'In game' && !!pres.placeId,
-      placeId: pres.placeId || null,
-      gameId: pres.gameId || null,
-    };
-  });
-
-  return {
-    ok: true, people: peopleOut, page: p, pageSize: size, total,
-    hasPrev: p > 0, hasNext: (p + 1) * size < total,
-  };
 }
 
 /**
@@ -933,6 +897,6 @@ module.exports = {
   configure, list, add, addFromCookie, remove, refresh,
   getLaunchInfo, getFollowContext, getPersonJoinContext, getPersonJoinLaunchInfo,
   startPolling, stopPolling,
-  people, loadFriends, presenceForIds, hasSession: () => !!firstValidCookie(),
+  presenceForIds, hasSession: () => !!firstValidCookie(),
   getAvatar, getAuthenticatedUser, getPresence, getPresenceBatch, buildLaunchUrl, buildFollowUserLaunchUrl,
 };

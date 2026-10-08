@@ -105,7 +105,7 @@ views.settings = async function () {
         </div></section>
 
         <section class="settings-group" id="settings-multi-instance"><div class="settings-group-head"><h2>Multi-instance mode</h2><p>Choose whether SUNDAY may use its legacy Roblox compatibility path.</p></div><div class="settings-sheet">
-          ${settingRow('Enable multi-instance mode', 'Allows up to three SUNDAY-managed clients through the existing legacy compatibility adapter. This does not bypass Roblox detection, slot ownership, or process capability checks.', `<label class="toggle"><input type="checkbox" id="set-multi-instance" aria-describedby="multi-instance-status" ${multiInstancePreference ? 'checked' : ''}><span class="track"></span></label>`)}
+          ${settingRow('Enable multi-instance mode', `Allows up to ${configuredLegacyManagedClientLimit()} SUNDAY-managed clients through the existing legacy compatibility adapter. This does not bypass Roblox detection, slot ownership, or process capability checks.`, `<label class="toggle"><input type="checkbox" id="set-multi-instance" aria-describedby="multi-instance-status" ${multiInstancePreference ? 'checked' : ''}><span class="track"></span></label>`)}
           <div class="settings-note" id="multi-instance-status">${esc(multiInstanceStatus)}${multiInstanceRestartRequired ? ` <button class="btn sm" data-action="app-restart">${icon('refresh')} Restart SUNDAY</button>` : ''}</div>
         </div></section>
 
