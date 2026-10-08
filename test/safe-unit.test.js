@@ -303,12 +303,13 @@ test('people friend cache invalidation reflects account membership changes', asy
     accounts.presenceForIds = async () => new Map();
     global.fetch = async url => {
       const value = String(url);
+      const parsedUrl = new URL(value);
       let body = {};
       if (value.includes('/users/7001/friends')) body = { data: [{ id: 7101, name: 'friend-a', displayName: 'Friend A' }] };
       else if (value.includes('/users/7002/friends')) body = { data: [{ id: 7102, name: 'friend-b', displayName: 'Friend B' }] };
       else if (value.includes('/v1/users/7101')) body = { id: 7101, name: 'friend-a', displayName: 'Friend A' };
       else if (value.includes('/v1/users/7102')) body = { id: 7102, name: 'friend-b', displayName: 'Friend B' };
-      else if (value.includes('thumbnails.roblox.com')) body = { data: [] };
+      else if (parsedUrl.hostname === 'thumbnails.roblox.com') body = { data: [] };
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -347,6 +348,7 @@ test('people invalidation during an in-flight load returns the current account-d
     accounts.presenceForIds = async () => new Map();
     global.fetch = async url => {
       const value = String(url);
+      const parsedUrl = new URL(value);
       if (value.includes('/users/7201/friends') && firstPending) {
         firstPending = false;
         await firstGate;
@@ -356,7 +358,7 @@ test('people invalidation during an in-flight load returns the current account-d
       else if (value.includes('/users/7202/friends')) body = { data: [{ id: 7302, name: 'friend-b', displayName: 'Friend B' }] };
       else if (value.includes('/v1/users/7301')) body = { id: 7301, name: 'friend-a', displayName: 'Friend A' };
       else if (value.includes('/v1/users/7302')) body = { id: 7302, name: 'friend-b', displayName: 'Friend B' };
-      else if (value.includes('thumbnails.roblox.com')) body = { data: [] };
+      else if (parsedUrl.hostname === 'thumbnails.roblox.com') body = { data: [] };
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
