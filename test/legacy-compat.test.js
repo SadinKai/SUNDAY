@@ -15,6 +15,24 @@ const {
   selectRobloxIsolationAdapter,
 } = require('../src/main/roblox-isolation-adapter');
 const { LegacyCloneManager, LegacyRobloxIsolationAdapter } = require('../src/main/legacy-roblox-isolation-adapter');
+const { MAX_LEGACY_MANAGED_CLIENTS } = require('../src/main/legacy-capacity');
+
+test('legacy restart reports unknown after confirmed stop when slot release throws', async () => {
+  const adapter = {
+    _ownedEnvironment: () => ({ environmentId: 'legacy-environment-1' }),
+    stop: async () => ({ ok: true, confirmed: true }),
+    release: async () => { throw new Error('Injected legacy release exception.'); },
+  };
+  const restarted = await LegacyRobloxIsolationAdapter.prototype.restart.call(
+    adapter,
+    { accountHandle: 'account-1', target: { type: 'HOME' } },
+    { capability: 'owned-capability', operation: { accountId: 'account-1' } },
+  );
+  assert.equal(restarted.ok, false);
+  assert.equal(restarted.previousStopped, true);
+  assert.equal(restarted.status, 'UNKNOWN');
+  assert.match(restarted.reason, /cleanup could not be confirmed/i);
+});
 
 test('LEGACY_COMPAT must equal 1 before legacy implementation is loaded', async () => {
   let loads = 0;
@@ -109,7 +127,8 @@ function fixture(options = {}) {
   const slots = new Map();
   const cloneManager = {
     acquire() {
-      const slotId = ['instance-1', 'instance-2', 'instance-3'].find(id => !slots.has(id));
+      const slotId = Array.from({ length: MAX_LEGACY_MANAGED_CLIENTS }, (_, index) => `instance-${index + 1}`)
+        .find(id => !slots.has(id));
       if (!slotId) throw new Error('full');
       const value = { slotId, executablePath: `C:\\Sunday\\${slotId}\\RobloxPlayerBeta.exe` };
       slots.set(slotId, value);
@@ -388,7 +407,10 @@ test('legacy first allocation sweeps stale slots before a live hard-linked sibli
       validationCount: 0,
       launchCount: 0,
     });
-    assert.deepEqual(reclaimed.slice(0, 3), ['instance-1', 'instance-2', 'instance-3']);
+    assert.deepEqual(
+      reclaimed.slice(0, MAX_LEGACY_MANAGED_CLIENTS),
+      Array.from({ length: MAX_LEGACY_MANAGED_CLIENTS }, (_, index) => `instance-${index + 1}`),
+    );
     assert.equal(built.slotId, 'instance-1');
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });

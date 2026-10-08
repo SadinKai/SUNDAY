@@ -116,10 +116,10 @@ async function main() {
     };
   })`);
 
-  // ---- v1.8.17 default mode, explicit paste, and layout ----
+  // ---- v1.8.18 default mode, explicit paste, and layout ----
   await evalJs(`document.querySelector('button[data-view="instances"]').click()`);
   await wait(150);
-  facts.v1817 = await evalJs(`(() => ({
+  facts.v1818 = await evalJs(`(() => ({
     multiInstanceBanner: /MULTI-INSTANCE MODE/.test(document.body.innerText),
     legacyDescription: /Enabled.*Uses SUNDAY.s legacy Roblox compatibility path\./s.test(document.body.innerText),
     pasteAction: Boolean(document.querySelector('[data-action="paste-roblox-link"]')),
@@ -193,6 +193,9 @@ async function main() {
 
   facts.jsErrors = await evalJs(`window.__err || null`);
   console.log(JSON.stringify(facts, null, 2));
+  if (process.env.SUNDAY_SMOKE_CLOSE === '1') {
+    await evalJs(`window.sunday.ui.window.close()`);
+  }
   ws.close();
 }
 

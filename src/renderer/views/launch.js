@@ -239,6 +239,12 @@ function launchPlanRows() {
 }
 
 function instanceRuntimeStatus(s) {
+  if (state.statusLoading) {
+    return {
+      tone: 'quiet', icon: 'clock', label: 'Checking Roblox',
+      detail: 'Saved accounts are ready while local Roblox detection finishes.', action: 'goto-diagnostics', actionLabel: 'Details',
+    };
+  }
   if (!s || !s.robloxFound) {
     return {
       tone: 'bad', icon: 'alert-circle', label: 'Roblox not found',
@@ -279,6 +285,7 @@ function launchDestinationSummary(value) {
 }
 
 function launchActionState(selectedCount, destination) {
+  const detectionPending = !!state.statusLoading;
   const robloxDetected = !!(state.status && state.status.robloxFound);
   const installationCompatible = !(state.status && state.status.robloxInstallation
     && state.status.robloxInstallation.legacyCompatible === false);
@@ -289,18 +296,18 @@ function launchActionState(selectedCount, destination) {
   const destinationValid = !(destination && destination.invalid);
   const countAllowed = legacyCompatibilityMode() || selectedCount <= 1;
 
-  let readiness = executionAvailable ? 'Ready to launch' : 'Launch unavailable';
+  let readiness = detectionPending ? 'Checking Roblox readiness' : (executionAvailable ? 'Ready to launch' : 'Launch unavailable');
   if (!hasSelection) readiness = 'Select at least one account';
   else if (!destinationValid) readiness = 'Check destination';
   else if (!countAllowed) readiness = 'Enable Multi-instance mode for multiple accounts';
   else if (robloxDetected && !installationCompatible) readiness = 'Classic Roblox Player required for Multi-instance mode';
-  else if (!executionAvailable && !robloxDetected) readiness = 'Roblox not detected · locate Roblox to continue';
+  else if (!executionAvailable && !robloxDetected) readiness = detectionPending ? 'Checking Roblox readiness' : 'Roblox not detected · locate Roblox to continue';
 
   return {
     executionAvailable,
-    enabled: hasSelection && destinationValid && countAllowed,
-    label: executionAvailable ? 'Launch' : (robloxDetected && installationCompatible ? 'View Diagnostics' : 'Locate Roblox'),
-    action: executionAvailable ? 'launch' : (robloxDetected && installationCompatible ? 'goto-diagnostics' : 'goto-settings'),
+    enabled: hasSelection && destinationValid && countAllowed && !detectionPending,
+    label: detectionPending ? 'Checking Roblox' : (executionAvailable ? 'Launch' : (robloxDetected && installationCompatible ? 'View Diagnostics' : 'Locate Roblox')),
+    action: detectionPending ? 'goto-diagnostics' : (executionAvailable ? 'launch' : (robloxDetected && installationCompatible ? 'goto-diagnostics' : 'goto-settings')),
     readiness,
   };
 }
@@ -333,17 +340,21 @@ views.instances = function () {
   const hasAccounts = state.accounts.length > 0;
   const mode = hasAccounts ? state.launchMode : 'account';
   const selectedCount = state.selected.size;
+  const selectionLimit = legacyManagedClientLimit();
+  const activeAccountIds = activeManagedAccountIds();
   const savedSessions = loadSessions();
 
   const accountRows = state.accounts.map(a => {
+    const accountId = safeAttr(a.id);
     const selected = state.selected.has(a.id);
+    const alreadyActive = activeAccountIds.has(String(a.id));
     const presence = String(a.presence || 'Offline');
     return `
-      <button type="button" class="launch-account-row roster-account ${selected ? 'on' : ''}" data-action="toggle-account" data-id="${a.id}" data-search="${esc(`${a.displayName || ''} ${a.username || ''} ${presence}`.toLowerCase())}" aria-pressed="${selected}">
+      <button type="button" class="launch-account-row roster-account ${selected ? 'on' : ''}" data-action="toggle-account" data-id="${accountId}" data-search="${esc(`${a.displayName || ''} ${a.username || ''} ${presence}`.toLowerCase())}" aria-pressed="${selected}" ${alreadyActive ? 'disabled aria-disabled="true"' : ''}>
         <span class="launch-account-check" aria-hidden="true">${icon('check')}</span>
         ${a.avatar ? `<img src="${esc(a.avatar)}" alt="">` : `<span class="launch-account-avatar">${icon('users')}</span>`}
         <span class="launch-account-copy"><b>${esc(a.displayName || a.username)}</b><small>@${esc(a.username || 'account')}</small></span>
-        <span class="launch-account-state"><span class="pd ${presenceClass(presence)}"></span>${esc(presence)}</span>
+        <span class="launch-account-state"><span class="pd ${presenceClass(presence)}"></span>${esc(alreadyActive ? 'Active client' : presence)}</span>
       </button>`;
   }).join('');
 
@@ -370,7 +381,7 @@ views.instances = function () {
         ${stageHeading(1, 'Account roster', 'Choose who plays', 'roster-heading')}
         <div class="launch-roster-toolbar">
           <label class="launch-account-search" for="launch-account-search">${icon('search')}<span class="sr-only">Search accounts</span><input id="launch-account-search" type="search" placeholder="Search accounts…" autocomplete="off"></label>
-          <span class="launch-roster-count" id="launch-selection-count" aria-live="polite">${selectedCount} / ${legacyCompatibilityMode() ? 3 : 1}</span>
+          <span class="launch-roster-count" id="launch-selection-count" aria-live="polite">${selectedCount} / ${selectionLimit}</span>
         </div>
         <div class="launch-roster-list">${hasAccounts ? accountRows : `
           <div class="launch-roster-empty"><span class="launch-account-avatar">${icon('users')}</span><div><b>No accounts yet</b><small>Add an account to build a launch roster.</small></div></div>`}
@@ -395,7 +406,7 @@ views.instances = function () {
         <div class="launch-action-review" aria-live="polite">
           <span><b id="launch-review-count">${selectedCount} client${selectedCount === 1 ? '' : 's'}</b><small id="launch-account-readiness">${esc(accountLaunch.readiness)}</small></span>
         </div>
-        <button class="btn primary launch-primary-action" data-action="${accountLaunch.action === 'launch' ? 'launch-accounts' : accountLaunch.action}" aria-describedby="launch-account-readiness" ${accountLaunch.enabled ? '' : 'disabled'}>${icon(accountLaunch.action === 'goto-settings' ? 'settings' : (accountLaunch.action === 'goto-diagnostics' ? 'activity' : 'play'))} <span id="lp-count-label">${accountLaunch.label}</span></button>
+        <button class="btn primary launch-primary-action" data-launch-primary="accounts" data-action="${accountLaunch.action === 'launch' ? 'launch-accounts' : accountLaunch.action}" aria-describedby="launch-account-readiness" ${accountLaunch.enabled ? '' : 'disabled'}>${icon(accountLaunch.action === 'goto-settings' ? 'settings' : (accountLaunch.action === 'goto-diagnostics' ? 'activity' : 'play'))} <span id="lp-count-label">${accountLaunch.label}</span></button>
         <p class="launch-action-context">${selectedCount || 'No'} client${selectedCount === 1 ? '' : 's'} · ${esc(destination.label)}</p>
       </section>
     </div>`;
@@ -406,7 +417,7 @@ views.instances = function () {
         ${stageHeading(1, 'Client count', 'Choose how many open', 'plain-count-heading')}
         <div class="launch-plain-count"><div class="stepper" data-tip="How many clients to open">
           <button type="button" data-action="step" data-dir="-1" data-target="launch-count">-</button>
-          <input id="launch-count" type="number" min="1" max="3" value="1" />
+          <input id="launch-count" type="number" min="1" max="${selectionLimit}" value="1" />
           <button type="button" data-action="step" data-dir="1" data-target="launch-count">+</button>
         </div><p>Signed-out clients do not use a saved account.</p></div>
       </section>
@@ -417,7 +428,7 @@ views.instances = function () {
       <section class="launch-stage launch-stage-action">
         ${stageHeading(3, 'Launch', 'Review and launch', 'plain-launch-heading')}
         <div class="launch-action-review"><span><b>Signed-out clients</b><small id="launch-quick-readiness">${esc(quickLaunch.readiness)}</small></span></div>
-        <button class="btn primary launch-primary-action" data-action="${quickLaunch.action === 'launch' ? 'launch-quick' : quickLaunch.action}" aria-describedby="launch-quick-readiness">${icon(quickLaunch.action === 'goto-settings' ? 'settings' : (quickLaunch.action === 'goto-diagnostics' ? 'activity' : 'play'))} ${quickLaunch.label}</button>
+        <button class="btn primary launch-primary-action" data-launch-primary="quick" data-action="${quickLaunch.action === 'launch' ? 'launch-quick' : quickLaunch.action}" aria-describedby="launch-quick-readiness" ${quickLaunch.enabled ? '' : 'disabled'}>${icon(quickLaunch.action === 'goto-settings' ? 'settings' : (quickLaunch.action === 'goto-diagnostics' ? 'activity' : 'play'))} ${quickLaunch.label}</button>
         <p class="launch-action-context">Roblox home</p>
       </section>
     </div>`;
@@ -617,15 +628,44 @@ function updateLaunchCount() {
   const launchState = launchActionState(state.selected.size, destination);
   const lbl = $('#lp-count-label');
   if (lbl) lbl.textContent = launchState.label;
-  const action = document.querySelector('[data-action="launch-accounts"]');
-  if (action) action.disabled = !launchState.enabled;
+  const action = document.querySelector('[data-launch-primary="accounts"]');
+  if (action) {
+    action.disabled = !launchState.enabled;
+    action.dataset.action = launchState.action === 'launch' ? 'launch-accounts' : launchState.action;
+  }
   const count = state.selected.size;
   const rosterCount = $('#launch-selection-count');
-  if (rosterCount) rosterCount.textContent = `${count} / ${legacyCompatibilityMode() ? 3 : 1}`;
+  if (rosterCount) rosterCount.textContent = `${count} / ${legacyManagedClientLimit()}`;
   const reviewCount = $('#launch-review-count');
   if (reviewCount) reviewCount.textContent = `${count} client${count === 1 ? '' : 's'}`;
   const readiness = $('#launch-account-readiness');
   if (readiness) readiness.textContent = launchState.readiness;
   const context = document.querySelector('.launch-action-context');
   if (context) context.textContent = `${count || 'No'} client${count === 1 ? '' : 's'} · ${destination.label}`;
+}
+
+function updateLaunchRuntimeStatus() {
+  const runtime = instanceRuntimeStatus(state.status || {});
+  const row = document.querySelector('.launch-mode-status');
+  if (row) {
+    row.className = `launch-mode-status runtime-${runtime.tone}`;
+    row.innerHTML = `<svg class="b-ico"><use href="#i-${runtime.icon}"/></svg><span><b>${runtime.label}</b><small>${esc(runtime.detail)}</small></span>
+      <button class="btn sm ghost" data-action="${runtime.action}">${runtime.actionLabel}</button>`;
+  }
+  updateLaunchCount();
+  const countInput = $('#launch-count');
+  if (countInput) {
+    const limit = legacyManagedClientLimit();
+    countInput.max = String(limit);
+    if (Number(countInput.value) > limit) countInput.value = String(limit);
+  }
+  const quick = document.querySelector('[data-launch-primary="quick"]');
+  if (quick) {
+    const quickState = launchActionState(1, { invalid: false });
+    quick.disabled = !quickState.enabled;
+    quick.dataset.action = quickState.action === 'launch' ? 'launch-quick' : quickState.action;
+    quick.innerHTML = `${icon(quickState.action === 'goto-settings' ? 'settings' : (quickState.action === 'goto-diagnostics' ? 'activity' : 'play'))} ${quickState.label}`;
+    const readiness = $('#launch-quick-readiness');
+    if (readiness) readiness.textContent = quickState.readiness;
+  }
 }

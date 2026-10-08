@@ -1,6 +1,6 @@
 [package]
 name = "sunday-setup"
-version = "1.8.17"
+version = "1.8.18"
 edition = "2021"
 rust-version = "1.96.0"
 description = "SUNDAY Launcher installer - a custom single-page Win32 application."

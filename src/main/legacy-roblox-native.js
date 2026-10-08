@@ -71,25 +71,40 @@ function ownedCount() {
   return count;
 }
 
-/** Own both global names exactly as the pre-hardening launcher did. */
+function singletonGuardReady() {
+  const eventGuard = singletonHandles.get(EVENT_NAME);
+  return !!(eventGuard && eventGuard.handle && eventGuard.typeSquat);
+}
+
+/** Reserve the singleton event name and acquire the mutex when available. */
 function acquireSingletonNames() {
   if (!init()) return { ok: false, held: ownedCount(), total: 2, reason: loadError || 'Legacy Win32 bindings unavailable.' };
   const contested = [];
   for (const name of [EVENT_NAME, MUTEX_NAME]) {
     const current = singletonHandles.get(name);
-    if (current && current.owned) continue;
+    if (current && (current.owned || (name === EVENT_NAME && current.typeSquat))) continue;
     let handle = current && current.handle;
     if (!handle) {
-      try { handle = CreateMutexW(null, 1, name); } catch (_) { handle = 0; }
+      // A mutex deliberately occupies the event name. Roblox cannot open an
+      // Event with that name and therefore does not enter its singleton wait.
+      try { handle = CreateMutexW(null, 0, name); } catch (_) { handle = 0; }
       if (!handle) { contested.push(name); continue; }
     }
     let wait = WAIT_TIMEOUT;
     try { wait = WaitForSingleObject(handle, 0); } catch (_) { wait = WAIT_TIMEOUT; }
     const owned = wait === WAIT_OBJECT_0 || wait === WAIT_ABANDONED;
-    singletonHandles.set(name, { handle, owned });
+    const typeSquat = name === EVENT_NAME;
+    singletonHandles.set(name, { handle, owned, typeSquat });
     if (!owned) contested.push(name);
   }
-  return { ok: ownedCount() === 2, held: ownedCount(), total: 2, contested };
+  const guardReady = singletonGuardReady();
+  return {
+    ok: guardReady,
+    guardReady,
+    held: ownedCount(),
+    total: 2,
+    contested,
+  };
 }
 
 function singletonNamesOwned() { return ownedCount() === 2; }
@@ -140,15 +155,18 @@ function getTypeIndices() {
   return typeIndices;
 }
 
-function isGlobalGuardName(name) {
+function isSingletonEventName(name) {
   if (!name) return false;
   const lower = String(name).toLowerCase();
-  return lower.endsWith(EVENT_NAME.toLowerCase()) || lower.endsWith(MUTEX_NAME.toLowerCase());
+  const leaf = lower.slice(lower.lastIndexOf('\\') + 1);
+  return leaf === EVENT_NAME.toLowerCase();
 }
 
 /**
- * Close only exact global Roblox singleton handles in internally enumerated
- * PIDs. Callers may not pass user-originated PIDs into this compatibility API.
+ * Close only the exact Roblox singleton event in internally enumerated PIDs.
+ * The mutex can remain owned by a live client; closing its process handle does
+ * not transfer mutex ownership and can leave preflight permanently contested.
+ * Callers may not pass user-originated PIDs into this compatibility API.
  */
 function closeGlobalSingletonHandles(pids) {
   if (!init()) return { ok: false, closed: 0, scanned: 0, reason: loadError || 'Legacy Win32 bindings unavailable.' };
@@ -200,7 +218,7 @@ function closeGlobalSingletonHandles(pids) {
         if (status === STATUS_SUCCESS) {
           const headerSize = process.arch === 'x64' ? 16 : 8;
           const length = Math.min(nameBuffer.readUInt16LE(0), nameBuffer.length - headerSize);
-          if (length > 0) isGuard = isGlobalGuardName(nameBuffer.subarray(headerSize, headerSize + length).toString('utf16le'));
+          if (length > 0) isGuard = isSingletonEventName(nameBuffer.subarray(headerSize, headerSize + length).toString('utf16le'));
         }
       } catch (_) {}
       try { CloseHandle(localHandle); } catch (_) {}
@@ -223,5 +241,6 @@ module.exports = {
   getLoadError,
   init,
   isAvailable,
+  singletonGuardReady,
   singletonNamesOwned,
 };

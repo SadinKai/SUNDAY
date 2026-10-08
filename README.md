@@ -2,8 +2,8 @@
 
 ### A Roblox account manager and multi-instance launcher for Windows.
 
-SUNDAY lets you manage multiple Roblox accounts, sign in, and launch up to
-three managed Roblox clients from one desktop app.
+SUNDAY lets you manage multiple Roblox accounts, sign in, and launch up to six
+managed Roblox clients from one desktop app.
 
 **One app. Multiple accounts. Multiple Roblox clients.**
 
@@ -24,7 +24,7 @@ three managed Roblox clients from one desktop app.
 - **Manage multiple accounts** in one place.
 - **Sign in and switch accounts** without juggling browser profiles.
 - **Choose a game or destination** from SUNDAY.
-- **Launch up to three Roblox clients** through the legacy compatibility mode.
+- **Launch up to six Roblox clients** through the legacy compatibility mode.
 - **See, focus, restart, or stop active clients** from one dashboard.
 - **Browse Roblox games and players** without leaving the app.
 
@@ -34,8 +34,8 @@ three managed Roblox clients from one desktop app.
 2. Download `SundayInstaller.exe` from the latest release.
 3. Run the installer, then open **SUNDAY**.
 
-The v1.8.17 Windows binaries are unsigned, so Windows SmartScreen may show a
-warning. The portable `SundayPortable_1.8.17_x64.zip` is available on
+The v1.8.18 Windows binaries are unsigned, so Windows SmartScreen may show a
+warning. The portable `SundayPortable_1.8.18_x64.zip` is available on
 the same release page. SUNDAY supports Windows 10 or later on x64 and requires
 Microsoft WebView2 Runtime.
 
@@ -84,7 +84,7 @@ from roblox.com to use Multi-instance mode.
 - **Microsoft Store Roblox is detected:** install the standard Windows client
   from roblox.com before using Multi-instance mode.
 - **A session expired:** open Accounts and choose **Sign in again**.
-- **SmartScreen appears:** v1.8.17 is intentionally unsigned. Verify the file
+- **SmartScreen appears:** v1.8.18 is intentionally unsigned. Verify the file
   came from the canonical Releases page and compare its published SHA-256 hash.
 
 See [Troubleshooting](docs/user/troubleshooting.md) for more help.
@@ -93,11 +93,11 @@ See [Troubleshooting](docs/user/troubleshooting.md) for more help.
 
 [![CI](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4)
-![Version](https://img.shields.io/badge/version-1.8.17-7A5AF8)
+![Version](https://img.shields.io/badge/version-1.8.18-7A5AF8)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Roblox compatibility can change outside this project's control. The legacy
-path is bounded to three client slots and is not vendor-supported isolation or
+path is bounded to six managed clients and is not vendor-supported isolation or
 a performance guarantee. Use only accounts, installations, and processes you
 own or are authorized to operate.
 
@@ -136,7 +136,7 @@ npm test
 npm run start
 ```
 
-The default adapter is the bounded legacy compatibility adapter for up to three
+The default adapter is the bounded legacy compatibility adapter for up to six
 clients. An explicit saved opt-out selects the unavailable planning-only
 adapter. Build, packaging, installer, and qualification commands are
 documented in [Development](docs/developer/development.md) and
@@ -151,7 +151,7 @@ documented in [Development](docs/developer/development.md) and
 - Session material is DPAPI-protected and temporary sign-in profiles are
   purged.
 - Network and installer inputs are bounded and validated.
-- Automatic updater installation is not active in v1.8.17. **View releases**
+- Automatic updater installation is not active in v1.8.18. **View releases**
   opens the canonical GitHub page for a manual download.
 
 These controls reduce specific risks; they do not make the host or an account

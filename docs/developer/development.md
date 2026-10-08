@@ -86,9 +86,11 @@ SQLite files, account exports, logs, clone trees, or screenshots.
 
 The default automated suite does not launch Roblox. Live packaged drivers are a
 separate, explicit qualification tier. The normal driver requires one
-authorized test account. The legacy driver requires three, the existing legacy
-adapter, and multi-instance Settings activation. Both require a controlled real
-Windows environment with no pre-existing Roblox process. They can launch Roblox
-and are never part of a normal build or CI run.
+authorized test account. The legacy driver defaults to six authorized accounts
+and accepts an explicit bounded count for a disclosed partial-capacity run; it
+also requires the existing legacy adapter and multi-instance Settings
+activation. Both require a controlled real Windows environment with no
+pre-existing Roblox process. They can launch Roblox and are never part of a
+normal build or CI run.
 
 See [Testing](testing.md) for the complete boundary.

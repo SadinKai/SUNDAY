@@ -79,9 +79,16 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'toggle-account': {
+      const selectionLimit = legacyManagedClientLimit();
+      if (!state.selected.has(id) && activeManagedAccountIds().has(String(id))) {
+        toast('That account already has an active SUNDAY-managed client.', 'bad');
+        break;
+      }
       if (state.selected.has(id)) state.selected.delete(id);
-      else if (state.selected.size >= (legacyCompatibilityMode() ? 3 : 1)) {
-        toast('Normal mode launches one account. Enable Multi-instance mode in Settings for up to three.', 'bad');
+      else if (state.selected.size >= selectionLimit) {
+        toast(legacyCompatibilityMode()
+          ? `SUNDAY can manage up to ${selectionLimit} selected clients at once.`
+          : 'Normal mode launches one account. Enable Multi-instance mode in Settings for additional clients.', 'bad');
         break;
       }
       else state.selected.add(id);
@@ -101,7 +108,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'launch-quick': {
       const inp = $('#launch-count');
-      const n = Math.max(1, Math.min(3, parseInt(inp && inp.value, 10) || 1));
+      const n = Math.max(1, Math.min(legacyManagedClientLimit(), parseInt(inp && inp.value, 10) || 1));
       if (state.settings && n > state.settings.warnInstanceCount) {
         const ok = await confirmDialog({ title: 'Prepare ' + n + ' operations?', body: 'That is more than your warning threshold of ' + state.settings.warnInstanceCount + '. Continue?', confirmText: 'Prepare' });
         if (!ok) break;
@@ -124,8 +131,8 @@ document.addEventListener('click', async (e) => {
       state.placeId = raw;
       elAction.disabled = true;
       const r = target.gameId && target.placeId
-        ? await call(() => api.launch.join(ids, target.placeId, target.gameId))
-        : await call(() => api.launch.accounts(ids, target.placeId));
+        ? await call(() => api.launch.join(ids, target.placeId, target.gameId), undefined, 0)
+        : await call(() => api.launch.accounts(ids, target.placeId), undefined, 0);
       elAction.disabled = false;
       if (handlePreparedPlan(r)) break;
       if (r && r.ok) {
@@ -136,12 +143,19 @@ document.addEventListener('click', async (e) => {
           armWatchdog(ids.map(id => ({ accountId: id, placeId: target.placeId, gameInstanceId: target.gameId, name: 'the game' })));
           toast('Watchdog enabled — dropped clients rejoin automatically', 'good');
         }
+        applyLaunchSelectionResult(r);
+        if (state.view === 'instances') views.instances();
+        else if (state.view === 'accounts') views.accounts();
       } else presentLaunchFailure(r, () => target.gameId && target.placeId
-        ? call(() => api.launch.join(ids, target.placeId, target.gameId))
-        : call(() => api.launch.accounts(ids, target.placeId)));
+        ? call(() => api.launch.join(ids, target.placeId, target.gameId), undefined, 0)
+        : call(() => api.launch.accounts(ids, target.placeId), undefined, 0));
       break;
     }
     case 'launch-account': {
+      if (activeManagedAccountIds().has(String(id))) {
+        toast('That account already has an active SUNDAY-managed client.', 'bad');
+        break;
+      }
       const r = await call(() => api.launch.accounts([id], ''));
       if (handlePreparedPlan(r)) break;
       if (r && r.ok) { clearLaunchFailure(); toast('Launched ' + (r.launched) + ' client', 'good'); }
@@ -155,7 +169,8 @@ document.addEventListener('click', async (e) => {
     case 'toggle-follow-account': {
       if (state.following || id === state.followTargetId) break;
       if (state.followSelected.has(id)) state.followSelected.delete(id);
-      else if (state.followSelected.size >= (legacyCompatibilityMode() ? 3 : 1)) { toast('Normal mode launches one account. Enable Multi-instance mode for up to three.', 'bad'); break; }
+      else if (activeManagedAccountIds().has(String(id))) { toast('That account already has an active SUNDAY-managed client.', 'bad'); break; }
+      else if (state.followSelected.size >= legacyManagedClientLimit()) { toast(`Select at most ${legacyManagedClientLimit()} accounts for this launch.`, 'bad'); break; }
       else state.followSelected.add(id);
       renderFollowDialog();
       break;
@@ -337,7 +352,7 @@ document.addEventListener('click', async (e) => {
       break;
     }
 
-    case 'refresh-games': gamesBrowse(); break;
+    case 'refresh-games': gamesBrowse(true); break;
     case 'redetect-from-launch': {
       const detected = await call(() => api.detect(), { ok: false, found: false });
       await refreshStatus();
@@ -462,7 +477,7 @@ document.addEventListener('click', async (e) => {
     case 'session-launch': {
       const session = loadSessions().find(x => x.id === elAction.dataset.id);
       if (!session) break;
-      const ids = session.accountIds.filter(i => state.accounts.some(a => a.id === i)).slice(0, 3);
+      const ids = session.accountIds.filter(i => state.accounts.some(a => a.id === i)).slice(0, legacyManagedClientLimit());
       if (!ids.length) { toast('None of this session\'s accounts exist anymore', 'bad'); break; }
       elAction.disabled = true;
       const r = session.gameId && session.placeId
@@ -607,7 +622,8 @@ document.addEventListener('click', async (e) => {
       if (!state.personJoin || state.personJoin.joining) break;
       const set = state.personJoin.selectedIds;
       if (set.has(id)) set.delete(id);
-      else if (set.size >= (legacyCompatibilityMode() ? 3 : 1)) { toast('Normal mode launches one account. Enable Multi-instance mode for up to three.', 'bad'); break; }
+      else if (activeManagedAccountIds().has(String(id))) { toast('That account already has an active SUNDAY-managed client.', 'bad'); break; }
+      else if (set.size >= legacyManagedClientLimit()) { toast(`Select at most ${legacyManagedClientLimit()} accounts for this launch.`, 'bad'); break; }
       else set.add(id);
       renderPersonJoinDialog();
       break;

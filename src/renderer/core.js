@@ -4,7 +4,13 @@
    reached only through the Tauri-backed `window.sunday` bridge. */
 
 const api = window.sunday;
-const { parseRobloxTarget, normalizeThemePreference, normalizeSessions } = window.SundayModel;
+const {
+  managedClientCapacity,
+  normalizeSessions,
+  normalizeThemePreference,
+  parseRobloxTarget,
+  selectionAfterLaunch,
+} = window.SundayModel;
 window.SundayLegacyIdentityCompat.migrateStorage(localStorage);
 
 /* ----------------------------- Theme ----------------------------- */
@@ -66,6 +72,7 @@ initWindowChrome();
 const state = {
   view: 'instances',
   status: null,
+  statusLoading: true,
   updater: null,
   instances: [],
   summary: null,
@@ -89,18 +96,18 @@ const state = {
   sessionDraft: null,
   games: {
     list: [], query: '', nextPageToken: null, loading: false, error: null, loaded: false,
-    sort: 'players', hideEmpty: false, categories: [], category: 'All', requestId: 0,
+    sort: 'players', hideEmpty: false, categories: [], category: 'All', requestId: 0, refreshedAt: 0,
   },
   people: {
     tab: 'people',
     route: 'home', returnRoute: 'home',
     filter: 'all', sort: 'status', filterText: '',
-    list: [], page: 0, pageSize: 12, total: 0, hasNext: false, hasPrev: false, loading: false, error: null, loaded: false, requestId: 0,
+    list: [], page: 0, pageSize: 12, total: 0, hasNext: false, hasPrev: false, loading: false, error: null, loaded: false, requestId: 0, refreshedAt: 0,
     search: {
       query: '', list: [], nextPageCursor: null, loading: false, error: null,
       searched: false, requestId: 0, notice: null, source: null, cached: false, retryable: false,
     },
-    detail: { userId: null, profile: null, loading: false, error: null },
+    detail: { userId: null, profile: null, loading: false, error: null, requestId: 0 },
   },
   accountsRefreshedAt: 0,
 };
@@ -162,6 +169,24 @@ function legacyCompatibilityMode() {
     && selection.legacyCompatEnabled === true
     && selection.selectedAdapter === 'LegacyRobloxIsolationAdapter'
     && selection.isolationState === 'LEGACY_COMPAT');
+}
+
+function legacyManagedClientLimit() {
+  return managedClientCapacity(state.status, legacyCompatibilityMode());
+}
+
+function configuredLegacyManagedClientLimit() {
+  return managedClientCapacity(state.status, true);
+}
+
+function activeManagedAccountIds() {
+  return new Set((state.instances || [])
+    .filter(instance => instance && instance.source === 'sunday' && instance.accountId)
+    .map(instance => String(instance.accountId)));
+}
+
+function applyLaunchSelectionResult(response) {
+  state.selected = new Set(selectionAfterLaunch(state.selected, response));
 }
 
 /* ----------------------------- DOM helpers ----------------------------- */

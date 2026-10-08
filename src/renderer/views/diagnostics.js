@@ -6,6 +6,7 @@ views.diagnostics = async function () {
   if (state.view !== 'diagnostics') return; // user navigated away while loading
   state.diag = (d && d.diagnostics) || {};
   const g = state.diag;
+  const capacity = g.legacyManagedCapacity || {};
   const kv = (k, v) => `<div class="k">${esc(k)}</div><div class="v">${esc(v == null ? '-' : v)}</div>`;
   mount(`
     <div class="page-head page-head-actions"><div><h1>Diagnostics</h1><p>Runtime truth, environment details, and the live troubleshooting log.</p></div><div class="inline"><button class="btn sm" data-action="copy-diag">${icon('copy')} Copy sanitized launch diagnostics</button><button class="btn sm" data-action="open-userdata">${icon('folder')} Open data folder</button></div></div>
@@ -21,6 +22,9 @@ views.diagnostics = async function () {
       </div></section>
       <section class="diag-section"><h2>Launch capability</h2><div class="kv">
         ${kv('Multi-instance', g.multiInstance)}${kv('LEGACY_COMPAT process value', g.legacyCompatEnvironmentValue)}${kv('Saved preference', g.legacyCompatSettingEnabled)}${kv('Activation source', g.legacyCompatActivationSource)}${kv('legacyCompatEnabled', g.legacyCompatEnabled)}${kv('selectedAdapter', g.selectedAdapter)}${kv('isolationState', g.isolationState)}${kv('isolation reason', g.isolationReason)}${kv('Guard', g.guard)}
+      </div></section>
+      <section class="diag-section"><h2>Managed client capacity</h2><div class="kv">
+        ${kv('Maximum managed clients', capacity.maxConcurrent)}${kv('Active managed clients', capacity.activeManagedClientCount)}${kv('In-flight launches', capacity.inFlightLaunchCount)}${kv('Available capacity', capacity.available)}${kv('Reusable slots', capacity.reusableSlotCount)}${kv('Released but busy slots', capacity.releasedButBusySlotCount)}${kv('Allocator decision', capacity.allocatorDecision ? `${capacity.allocatorDecision.decision}: ${capacity.allocatorDecision.slotId}` : '-')}${kv('Capacity reason', capacity.capacityReachedReason || '-')}
       </div></section>
       <section class="diag-section diag-wide"><h2>Installation and local data</h2><div class="kv">
         ${kv('Roblox', g.robloxFound ? `${g.robloxDisplayName || 'Roblox'} · ${g.robloxVersion || 'unknown version'}` : 'not found')}${kv('Installation type', g.robloxInstallationType)}${kv('Detection source', g.robloxSource)}${kv('Legacy compatible', g.robloxLegacyCompatible)}${kv('Data folder', g.userData)}${kv('Log file', g.logFile)}

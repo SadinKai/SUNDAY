@@ -127,15 +127,17 @@ class InstanceKeeper extends EventEmitter {
       const row = byAccount.get(record.accountId);
       if (!row) continue;
       if (record.capability && record.capability !== row.capability) continue;
-      record.capability = row.capability;
-      record.state = 'running';
-      record.paused = false;
-      record.stableAt = record.stableAt || this.now();
+      let recordChanged = false;
+      if (record.capability !== row.capability) { record.capability = row.capability; recordChanged = true; }
+      if (record.state !== 'running') { record.state = 'running'; recordChanged = true; }
+      if (record.paused) { record.paused = false; recordChanged = true; }
+      if (!record.stableAt) { record.stableAt = this.now(); recordChanged = true; }
       if (record.attempts > 0 && this.now() - record.stableAt >= STABLE_MS) {
         record.attempts = 0;
         record.lastReason = '';
+        recordChanged = true;
       }
-      changed = true;
+      changed = changed || recordChanged;
     }
     if (changed) this.emit('change', this.status());
   }
@@ -238,6 +240,7 @@ class InstanceKeeper extends EventEmitter {
         targetUserId: record.targetUserId,
         name: record.name,
       });
+      if (this.records.get(record.accountId) !== record) return;
       const operation = response && response.plan && response.plan.operations && response.plan.operations[0];
       if (response && response.ok && operation && operation.state === 'RUNNING' && operation.capability) {
         record.capability = operation.capability;
@@ -249,6 +252,11 @@ class InstanceKeeper extends EventEmitter {
         this._scheduleRejoin(record, response && (response.error || response.reason) || 'rejoin plan failed');
       }
       this.emit('change', this.status());
+    } catch (error) {
+      if (this.records.get(record.accountId) === record) {
+        this.logger.warn('Watchdog relaunch request failed', error && error.message);
+        this._scheduleRejoin(record, error && error.message || 'rejoin request failed');
+      }
     } finally {
       this.busy.delete(record.accountId);
     }

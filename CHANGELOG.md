@@ -2,6 +2,38 @@
 
 All notable changes to SUNDAY Launcher are documented in this file.
 
+## 1.8.18
+
+### Changed
+
+- Raised the bounded legacy capacity from three to six SUNDAY-managed classic
+  Win32 Roblox clients across planning, backend validation, renderer controls,
+  sessions, server fill, follow/join flows, diagnostics, and test automation.
+- Fixed incremental launches retaining already-successful account selections,
+  which could resubmit A and B when C was selected and exhaust the old ceiling
+  before the newly selected account launched.
+- Separated the six-client logical ceiling from bounded physical clone-slot
+  headroom so multiple `RELEASED_BUT_BUSY` histories do not create false
+  capacity failures or unsafe reuse.
+- Added exact application-restart ownership recovery using non-secret process,
+  path, file, account, operation, and slot identity evidence. Persisted launch
+  plans contain no opaque capability secrets; restored clients receive fresh
+  in-memory capabilities.
+- Expanded deterministic and guarded packaged qualification for bulk six,
+  A+B then C through F, app restart with six live clients, seventh-launch
+  rejection, sibling preservation, restart, stop, and slot reuse.
+
+### Release boundaries
+
+- The six-client path remains an unsupported legacy Roblox compatibility
+  mechanism for verified classic Win32 installations. Store/AppX behavior is
+  unchanged and remains ineligible for clone-based multi-instance launching.
+- Build, source, synthetic, and packaged smoke results do not imply live Roblox
+  qualification. Publication requires a successful sanitized report from the
+  exact v1.8.18 candidate on the authorized Windows/account environment.
+- No release is published by the source change itself. The candidate remains
+  unsigned and automatic update installation remains unavailable.
+
 ## 1.8.17
 
 ### Changed

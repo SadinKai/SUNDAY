@@ -1,6 +1,6 @@
 # Multi-instance mode
 
-Multi-instance mode lets SUNDAY launch one to three managed Roblox clients by
+Multi-instance mode lets SUNDAY launch one to six managed Roblox clients by
 using its existing legacy compatibility adapter. It is enabled by default on a
 fresh installation and is not an official Roblox feature.
 
@@ -49,6 +49,18 @@ The setting selects the existing adapter; it does not bypass Roblox detection,
 clone validation, slot ownership, process capabilities, or exact-client stop
 and restart checks. A missing Roblox installation or an unsafe client slot
 still blocks launch.
+
+Six is the managed-client ceiling, not the number of clone directories that
+may temporarily exist. Restart and cleanup can leave a released slot busy
+while Windows or Roblox still holds mapped files, so the allocator keeps
+bounded physical headroom and chooses another safe slot. A seventh launch is
+rejected cleanly without disturbing the six clients already running.
+
+After SUNDAY itself restarts, it restores control only when durable non-secret
+ownership evidence still matches the exact process creation identity,
+executable path, file identity, account, and slot. It issues a new in-memory
+capability for that exact client. A merely observed Roblox process is never
+adopted.
 
 Use only accounts, installations, and processes you own or are authorized to
 operate. Roblox updates can change compatibility outside SUNDAY's control.

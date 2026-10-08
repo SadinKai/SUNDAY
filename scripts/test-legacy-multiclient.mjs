@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
+const processes = require('../src/main/processes');
+const { MAX_LEGACY_MANAGED_CLIENTS } = require('../src/main/legacy-capacity');
 
 if (process.env.LEGACY_COMPAT !== '1') {
   console.error('Refusing live Roblox test: set LEGACY_COMPAT=1 explicitly.');
@@ -92,7 +97,7 @@ const report = {
   closeOneKeepOne: { passed: false },
   restartOneKeepOne: { passed: false },
   keeper: { passed: false },
-  threeAccount: { passed: false },
+  sixAccount: { passed: false },
   failures: [],
 };
 
@@ -143,6 +148,10 @@ async function cleanupOwned() {
 
 let fatal = null;
 try {
+  const baseline = await processes.list();
+  if (baseline.length) {
+    throw new Error('A Roblox client was already running; qualification refuses to adopt or terminate it.');
+  }
   const status = await call('app_status');
   if (!status.ok || !status.isolationAdapter || status.isolationAdapter.mode !== 'LEGACY_COMPAT') {
     throw new Error('Backend did not enter explicit LEGACY_COMPAT mode.');
@@ -155,9 +164,12 @@ try {
   const available = Array.isArray(accountResult.accounts) ? accountResult.accounts : [];
   const selected = requestedAccountIds.length
     ? requestedAccountIds.map(id => available.find(account => String(account.id) === id)).filter(Boolean)
-    : available.slice(0, 3);
+    : available.slice(0, MAX_LEGACY_MANAGED_CLIENTS);
   if (selected.length < 2) throw new Error(`Two saved Roblox accounts are required; found ${selected.length}.`);
-  const ids = selected.slice(0, 3).map(account => String(account.id));
+  const ids = selected.slice(0, MAX_LEGACY_MANAGED_CLIENTS).map(account => String(account.id));
+  if (!twoOnly && ids.length !== MAX_LEGACY_MANAGED_CLIENTS) {
+    throw new Error(`${MAX_LEGACY_MANAGED_CLIENTS} distinct saved Roblox accounts are required; found ${ids.length}.`);
+  }
   report.accountIds = ids;
 
   const two = await launchAccounts(ids.slice(0, 2));
@@ -180,7 +192,7 @@ try {
     report.restartOneKeepOne = { passed: false, skipped: true, reason: 'Two-account-only evidence run.' };
     report.closeOneKeepOne = { passed: false, skipped: true, reason: 'Two-account-only evidence run.' };
     report.keeper = { passed: false, skipped: true, reason: 'Two-account-only evidence run.' };
-    report.threeAccount = { passed: false, blocked: true, reason: 'Instance-3 was explicitly excluded.' };
+    report.sixAccount = { passed: false, blocked: true, reason: 'The full six-client gate was explicitly excluded.' };
   } else {
   const restarted = await call('instance_restart', { capability: first.capability }, 180000);
   const restartedOperation = restarted && restarted.operation;
@@ -235,23 +247,23 @@ try {
   await cleanupOwned();
   await call('keeper_disarm_all');
 
-  if (ids.length < 3) {
-    report.threeAccount = {
+  if (ids.length < MAX_LEGACY_MANAGED_CLIENTS) {
+    report.sixAccount = {
       passed: false,
       blocked: true,
-      reason: `Three distinct saved Roblox accounts are required; found ${ids.length}.`,
+      reason: `${MAX_LEGACY_MANAGED_CLIENTS} distinct saved Roblox accounts are required; found ${ids.length}.`,
     };
   } else {
-    const three = await launchAccounts(ids);
-    report.threeAccount = {
+    const six = await launchAccounts(ids);
+    report.sixAccount = {
       passed: true,
-      pids: three.pids,
-      instanceIds: three.instanceIds,
-      durationMs: three.durationMs,
+      pids: six.pids,
+      instanceIds: six.instanceIds,
+      durationMs: six.durationMs,
       allRemainedAlive: true,
     };
     await sleep(5000);
-    await waitForCapabilities(three.rows.map(row => row.capability));
+    await waitForCapabilities(six.rows.map(row => row.capability));
   }
   }
 } catch (error) {
@@ -264,7 +276,7 @@ try {
     || (report.closeOneKeepOne.passed
       && report.restartOneKeepOne.passed
       && report.keeper.passed
-      && report.threeAccount.passed));
+      && report.sixAccount.passed));
   const outputDirectory = path.join(root, 'artifacts');
   fs.mkdirSync(outputDirectory, { recursive: true });
   const outputPath = path.join(outputDirectory, 'phase7-legacy-multiclient-result.json');

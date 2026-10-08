@@ -103,6 +103,11 @@ class ProcessCapabilityRegistry {
       this._transition(record, 'STALE', 'The process capability no longer identifies the owned process.');
       return { ok: false, reason: 'The process capability is stale or no longer identifies the owned process.' };
     }
+    // A capability remains live only while repeated use proves the same
+    // process creation, canonical image path, and file identity. This avoids
+    // abandoning healthy clients after the fixed TTL without weakening PID
+    // reuse or executable-replacement checks.
+    record.expiresAt = new Date(this.now() + this.ttlMs).toISOString();
     return { ok: true, state: record.state, action: String(options && options.action || 'observe'), record: Object.freeze(Object.assign({}, record)) };
   }
 

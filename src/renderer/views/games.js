@@ -6,6 +6,8 @@
    browsing and re-sorting never re-crunch it. Powers the "Played" line on
    cards and the Most-played sort. */
 const playedCache = { at: 0, map: new Map() };
+const GAMES_REFRESH_TTL_MS = 2 * 60 * 1000;
+let gamesBrowseInFlight = null;
 async function ensurePlayedMap() {
   if (Date.now() - playedCache.at < 60000) return playedCache.map;
   const r = await call(() => api.playtime.stats(), { ok: false });
@@ -73,8 +75,11 @@ views.games = function () {
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(debounce); doGamesSearch(inp.value); } });
   }
   renderGamesCategories();
-  if (!g.loaded && !g.loading) gamesBrowse();
-  else renderGamesGrid();
+  if (!g.loaded && !g.loading) gamesBrowse(false);
+  else {
+    renderGamesGrid();
+    if (!g.loading && Date.now() - Number(g.refreshedAt || 0) >= GAMES_REFRESH_TTL_MS) gamesBrowse(false);
+  }
   // Playtime chips land a beat after the grid - re-render the grid only.
   ensurePlayedMap().then(() => { if (state.view === 'games') renderGamesGrid(); });
 };
@@ -452,18 +457,26 @@ function renderGamesGrid() {
   grid.innerHTML = list.map(gameCard).join('') + tail;
 }
 
-async function gamesBrowse() {
+async function gamesBrowse(force) {
   const g = state.games;
   const rid = ++g.requestId;
-  g.loading = true; g.error = null; g.query = ''; g.list = []; g.nextPageToken = null;
-  g.categories = []; g.category = 'All';
+  g.loading = true; g.error = null; g.query = ''; g.nextPageToken = null;
+  if (!g.list.length) { g.categories = []; g.category = 'All'; }
   if (state.view === 'games') { renderGamesCategories(); renderGamesGrid(); }
-  const r = await call(() => api.games.browse());
-  if (rid !== g.requestId) return; // a newer browse/search superseded this one
-  g.loading = false; g.loaded = true;
-  if (r && r.ok) { g.list = r.games; g.nextPageToken = r.nextPageToken; g.categories = r.categories || []; }
-  else g.error = (r && r.error) || 'Games could not be loaded.';
-  if (state.view === 'games') { renderGamesCategories(); renderGamesGrid(); }
+  const request = gamesBrowseInFlight || call(() => api.games.browse(force === true));
+  if (!gamesBrowseInFlight) gamesBrowseInFlight = request;
+  try {
+    const r = await request;
+    if (rid !== g.requestId) return; // a newer browse/search superseded this one
+    g.loading = false; g.loaded = true;
+    if (r && r.ok) {
+      g.list = r.games; g.nextPageToken = r.nextPageToken; g.categories = r.categories || [];
+      g.category = 'All'; g.refreshedAt = Date.now();
+    } else g.error = (r && r.error) || 'Games could not be loaded.';
+    if (state.view === 'games') { renderGamesCategories(); renderGamesGrid(); }
+  } finally {
+    if (gamesBrowseInFlight === request) gamesBrowseInFlight = null;
+  }
 }
 
 async function doGamesSearch(query) {
@@ -475,7 +488,7 @@ async function doGamesSearch(query) {
   const r = await call(() => (g.query ? api.games.search(g.query) : api.games.browse()));
   if (rid !== g.requestId) return; // a newer search superseded this one
   g.loading = false; g.loaded = true;
-  if (r && r.ok) { g.list = r.games; g.nextPageToken = r.nextPageToken; g.categories = r.categories || []; }
+  if (r && r.ok) { g.list = r.games; g.nextPageToken = r.nextPageToken; g.categories = r.categories || []; g.refreshedAt = Date.now(); }
   else g.error = (r && r.error) || 'Search failed.';
   if (state.view === 'games') { renderGamesCategories(); renderGamesGrid(); }
 }
@@ -486,8 +499,8 @@ async function gamesLoadMore() {
   g.loading = true;
   const rid = g.requestId;
   const r = await call(() => api.games.search(g.query, g.nextPageToken));
-  g.loading = false;
   if (rid !== g.requestId) return; // superseded by a new search/browse
+  g.loading = false;
   if (r && r.ok) { g.list = g.list.concat(r.games); g.nextPageToken = r.nextPageToken; if (state.view === 'games') renderGamesGrid(); }
 }
 

@@ -270,7 +270,7 @@ async function main() {
 
       state.updater = { state: 'unavailable' };
       state.status = {
-        appVersion: '1.8.17',
+        appVersion: '1.8.18',
         capabilities: { updaterApply: { state: 'UNAVAILABLE' } },
         adapterSelection: {
           legacyCompatEnabled: false,

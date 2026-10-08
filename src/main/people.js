@@ -18,10 +18,13 @@ const CACHE_TTL = 2 * 60 * 1000;
 const FRIENDS_TTL = 5 * 60 * 1000;
 const SEARCH_TTL = 5 * 60 * 1000;
 const SEARCH_MIN_INTERVAL_MS = 750;
+const CACHE_MAX = 256;
 const cache = new Map();
 const searchCache = new Map();
 const searchInFlight = new Map();
 let friendsCache = { at: 0, list: [] };
+let friendsInFlight = null;
+let friendsGeneration = 0;
 let searchQueue = Promise.resolve();
 let lastKeywordSearchAt = 0;
 const searchSessionId = randomUUID();
@@ -31,12 +34,23 @@ function configure(opts) {
   if (opts && opts.logger) logger = opts.logger;
 }
 
+function invalidateFriends() {
+  friendsGeneration += 1;
+  friendsCache = { at: 0, list: [] };
+  friendsInFlight = null;
+}
+
 const delay = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, ms || 0)));
 
 function rememberSearch(key, value) {
   // Bound memory for long-running SUNDAY Launcher sessions.
   while (searchCache.size >= 100) searchCache.delete(searchCache.keys().next().value);
   searchCache.set(key, { at: Date.now(), value });
+}
+
+function rememberCache(key, value) {
+  while (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+  cache.set(key, { at: Date.now(), value });
 }
 
 function cleanText(value, max) {
@@ -60,7 +74,7 @@ async function getJson(url, options) {
     const res = await fetchWithPolicy(url, Object.assign({}, options && options.fetch, { signal: controller.signal }), 'robloxApi');
     if (!res.ok) return null;
     const value = await res.json();
-    if (key) cache.set(key, { at: Date.now(), value });
+    if (key) rememberCache(key, value);
     return value;
   } catch (_) {
     return null;
@@ -111,7 +125,7 @@ async function keywordSearch(query, cursor) {
         Accept: 'application/json',
         Origin: 'https://www.roblox.com',
         Referer: 'https://www.roblox.com/',
-        'User-Agent': 'SUNDAY-Launcher/1.8.17',
+        'User-Agent': 'SUNDAY-Launcher/1.8.18',
       },
     };
 
@@ -290,28 +304,38 @@ async function fetchFriendsFor(account) {
 
 async function allFriends(force) {
   if (!force && friendsCache.list.length && Date.now() - friendsCache.at < FRIENDS_TTL) return friendsCache.list;
-  const saved = accounts.list();
-  const ownIds = new Set(saved.map(a => Number(a.userId)));
-  const groups = await Promise.all(saved.map(fetchFriendsFor));
-  const merged = new Map();
-  for (const group of groups) {
-    for (const friend of group) {
-      if (!friend.userId || ownIds.has(friend.userId)) continue;
-      const existing = merged.get(friend.userId);
-      if (existing) {
-        for (const source of friend.connectedAccounts) {
-          if (!existing.connectedAccounts.some(a => Number(a.userId) === Number(source.userId))) existing.connectedAccounts.push(source);
+  if (friendsInFlight && friendsInFlight.generation === friendsGeneration) return friendsInFlight.promise;
+  const generation = friendsGeneration;
+  const promise = (async () => {
+    const saved = accounts.list();
+    const ownIds = new Set(saved.map(a => Number(a.userId)));
+    const groups = await Promise.all(saved.map(fetchFriendsFor));
+    const merged = new Map();
+    for (const group of groups) {
+      for (const friend of group) {
+        if (!friend.userId || ownIds.has(friend.userId)) continue;
+        const existing = merged.get(friend.userId);
+        if (existing) {
+          for (const source of friend.connectedAccounts) {
+            if (!existing.connectedAccounts.some(a => Number(a.userId) === Number(source.userId))) existing.connectedAccounts.push(source);
+          }
+        } else {
+          merged.set(friend.userId, friend);
         }
-      } else {
-        merged.set(friend.userId, friend);
       }
     }
-  }
-  friendsCache = {
-    at: Date.now(),
-    list: Array.from(merged.values()).sort((a, b) => a.displayName.localeCompare(b.displayName)),
-  };
-  return friendsCache.list;
+    const nextCache = {
+      at: Date.now(),
+      list: Array.from(merged.values()).sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    };
+    if (generation !== friendsGeneration) return allFriends(true);
+    friendsCache = nextCache;
+    return nextCache.list;
+  })().finally(() => {
+    if (friendsInFlight && friendsInFlight.promise === promise) friendsInFlight = null;
+  });
+  friendsInFlight = { generation, promise };
+  return promise;
 }
 
 async function listFriends(page, pageSize, force) {
@@ -565,6 +589,7 @@ async function profile(userId) {
 
 module.exports = {
   configure,
+  invalidateFriends,
   listFriends,
   search,
   profile,
