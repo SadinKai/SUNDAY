@@ -36,7 +36,7 @@ jobs:
         run: npm ci
 
       - name: Run safe verification suite
-        run: npm test
+        run: node scripts/run-ci-tests.mjs
 
       - name: Audit production JavaScript dependencies
         run: npm audit --omit=dev --audit-level=moderate

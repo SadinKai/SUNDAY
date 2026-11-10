@@ -9,6 +9,15 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 
+test('CI failure annotations expose locations and codes while suppressing assertion values', async () => {
+  const { failureAnnotations } = await import('../scripts/run-ci-tests.mjs');
+  const canary = 'synthetic-private-value-never-report';
+  const output = `not ok 1 - ${canary}\n  ---\n  location: 'D:\\\\a\\\\repo\\\\test\\\\safe-unit.test.js:15:1'\n  error: '${canary}'\n  code: 'ERR_ASSERTION'\n  actual: '${canary}'\n  ...\n1..1`;
+  const annotations = failureAnnotations(output);
+  assert.deepEqual(annotations, ['::error file=test/safe-unit.test.js,line=15,title=JavaScript test failed::ERR_ASSERTION; inspect this regression locally.']);
+  assert.equal(annotations.join('').includes(canary), false);
+});
+
 test('release version agrees across JavaScript, Rust, locks, and the Windows shell', () => {
   const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'))).version;
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')));
