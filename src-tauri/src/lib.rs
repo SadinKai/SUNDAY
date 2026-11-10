@@ -299,7 +299,10 @@ impl NodeBackend {
 
     fn shutdown(&self) {
         if self.alive.load(Ordering::Acquire) {
-            let _ = self.invoke_with_timeout("shutdown", Value::Null, Some(Duration::from_secs(4)));
+            // Allow the backend's bounded exact-process rollback to finish
+            // before forcing it down. Completed managed clients remain alive.
+            let _ =
+                self.invoke_with_timeout("shutdown", Value::Null, Some(Duration::from_secs(15)));
         }
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {

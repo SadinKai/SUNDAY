@@ -240,31 +240,37 @@ class LaunchPlanStore {
     const recovered = [];
     for (const plan of this.list(200)) {
       const interrupted = (plan.operations || []).some(operation =>
-        operation.state === 'RUNNING' || !OP_FINAL.has(operation.state));
+        restored.has(operation.operationId) || operation.state === 'RUNNING' || !OP_FINAL.has(operation.state));
       if (!interrupted) continue;
       this.update(plan.planId, current => {
         let rebound = 0;
         let unknown = 0;
         for (const operation of current.operations) {
-          if (operation.state === 'RUNNING') {
-            const evidence = restored.get(operation.operationId);
-            const matches = evidence
-              && String(evidence.accountId || '') === String(operation.accountId || '')
-              && String(evidence.instanceId || '') === String(operation.instanceId || '');
-            if (matches) {
-              operation.state = 'RUNNING';
-              operation.environmentId = evidence.environmentId;
-              operation.instanceId = evidence.instanceId;
-              operation.pid = Number(evidence.pid) || null;
+          const evidence = restored.get(operation.operationId);
+          const matches = evidence
+            && String(evidence.accountId || '') === String(operation.accountId || '');
+          const sameInstance = matches
+            && String(evidence.instanceId || '') === String(operation.instanceId || '');
+          if (matches) {
+            operation.environmentId = evidence.environmentId;
+            operation.instanceId = evidence.instanceId;
+            operation.pid = Number(evidence.pid) || null;
+            if (operation.state === 'RUNNING' && sameInstance) {
               operation.reason = '';
               rebound += 1;
             } else {
               unknown += 1;
               operation.state = 'UNKNOWN';
-              operation.reason = 'Persisted ownership evidence did not match a live Roblox process.';
-              operation.pid = null;
+              operation.reason = 'Exact persisted ownership was restored for an operation whose durable running transition was incomplete.';
             }
             operation.capability = null;
+            operation.updatedAt = nowIso(this.now);
+          } else if (operation.state === 'RUNNING') {
+            unknown += 1;
+            operation.state = 'UNKNOWN';
+            operation.reason = 'Persisted ownership evidence did not match a live Roblox process.';
+            operation.capability = null;
+            operation.pid = null;
             operation.updatedAt = nowIso(this.now);
           } else if (!OP_FINAL.has(operation.state)) {
             unknown += 1;
@@ -309,7 +315,9 @@ class LaunchCoordinator extends EventEmitter {
     this.now = opts.now || (() => Date.now());
     this.operationTimeoutMs = Math.max(100, Number(opts.operationTimeoutMs) || 30000);
     this.active = new Map();
+    this.shuttingDown = false;
     this.operationCapabilities = new Map();
+    this.operationEnvironments = new Map();
     this.lifecycleActions = new Map();
     const restoredOwnership = typeof this.adapter.restoredOwnership === 'function'
       ? this.adapter.restoredOwnership()
@@ -317,8 +325,12 @@ class LaunchCoordinator extends EventEmitter {
     this.recovered = this.store.recoverInterrupted(restoredOwnership);
     for (const evidence of restoredOwnership) {
       const plan = this.store.list(200).find(item => (item.operations || [])
-        .some(operation => operation.operationId === evidence.operationId && operation.state === 'RUNNING'));
-      if (plan && evidence.capability) this.operationCapabilities.set(evidence.operationId, evidence.capability);
+        .some(operation => operation.operationId === evidence.operationId
+          && (operation.state === 'RUNNING' || operation.state === 'UNKNOWN')));
+      if (plan && evidence.capability) {
+        this.operationCapabilities.set(evidence.operationId, evidence.capability);
+        this.operationEnvironments.set(evidence.operationId, evidence.environmentId);
+      }
     }
   }
 
@@ -358,18 +370,22 @@ class LaunchCoordinator extends EventEmitter {
   }
 
   async prepare(input) {
+    if (this.shuttingDown) throw new Error('SUNDAY is closing; new launches are unavailable.');
     const plan = this.store.create(this.planner.create(input));
     this._emit(plan);
     return this.run(plan.planId);
   }
 
   async run(planId) {
+    if (this.shuttingDown) throw new Error('SUNDAY is closing; new launches are unavailable.');
     let plan = this.store.get(planId);
     if (!plan) throw new Error('Unknown launch plan.');
     if (this.active.has(plan.planId)) return this._response(this.store.get(plan.planId));
 
     const controller = new AbortController();
     const runtime = { controller, environments: new Map(), capabilities: new Map() };
+    let settled;
+    runtime.settled = new Promise(resolve => { settled = resolve; });
     this.active.set(plan.planId, runtime);
     try {
       const preflight = await this.adapter.preflight({ plan: copy(plan), signal: controller.signal });
@@ -452,7 +468,17 @@ class LaunchCoordinator extends EventEmitter {
       return this._response(plan, ISOLATION_STATES.ACTIVATED);
     } finally {
       this.active.delete(plan.planId);
+      settled();
     }
+  }
+
+  async shutdown() {
+    this.shuttingDown = true;
+    const active = Array.from(this.active, ([planId, runtime]) => ({ planId, runtime }));
+    for (const { planId } of active) await this.cancel(planId);
+    // Keep the state database and adapter alive until exact launch rollback
+    // finishes. Completed plans are not active and their clients stay alive.
+    await Promise.all(active.map(({ runtime }) => runtime.settled));
   }
 
   async _runOperation(planId, operationId, runtime) {
@@ -475,8 +501,9 @@ class LaunchCoordinator extends EventEmitter {
         this.adapter.allocateInstance(copy(operation), { signal: operationSignal }),
         operationSignal,
         'Isolation allocation timed out.',
+        { settleOnAbort: true },
       );
-      if (!isActivated(allocated) || !allocated.environmentId) {
+      if (!isActivated(allocated) || allocated.ok === false || !allocated.environmentId) {
         return this._failOperation(planId, operationId, allocated && allocated.reason || 'Isolation allocation failed.', null, {
           failureCode: allocated && allocated.failureCode,
           failureStage: allocated && allocated.failureStage || 'allocation',
@@ -492,6 +519,9 @@ class LaunchCoordinator extends EventEmitter {
         return current;
       });
       operation = plan.operations.find(item => item.operationId === operationId);
+      if (runtime.controller.signal.aborted) {
+        return this._failAndRelease(planId, operationId, runtime, 'Launch operation was cancelled.', 'CANCELLED');
+      }
 
       // The host resolves only a non-secret account handle and target. Raw
       // cookies, passwords, authentication tickets, and deep-link secrets are
@@ -506,6 +536,9 @@ class LaunchCoordinator extends EventEmitter {
           failureCode: 'AUTHENTICATION_FAILED', failureStage: 'intent',
         });
       }
+      if (runtime.controller.signal.aborted) {
+        return this._failAndRelease(planId, operationId, runtime, 'Launch operation was cancelled.', 'CANCELLED');
+      }
 
       this._update(planId, current => {
         const currentOperation = current.operations.find(item => item.operationId === operationId);
@@ -519,15 +552,19 @@ class LaunchCoordinator extends EventEmitter {
         }),
         operationSignal,
         'Launch timed out before stable running.',
+        { settleOnAbort: true },
       );
-      if (!isActivated(launched) || !launched.capability) {
+      if (launched && launched.capability) {
+        runtime.capabilities.set(operationId, launched.capability);
+        this.operationCapabilities.set(operationId, launched.capability);
+        this.operationEnvironments.set(operationId, launched.environmentId || allocated.environmentId);
+      }
+      if (!isActivated(launched) || launched.ok === false || !launched.capability) {
         return this._failAndRelease(planId, operationId, runtime, launched && launched.reason || 'Launch did not reach stable running.', null, {
           failureCode: launched && launched.failureCode,
           failureStage: launched && launched.failureStage || 'launch',
         });
       }
-      runtime.capabilities.set(operationId, launched.capability);
-      this.operationCapabilities.set(operationId, launched.capability);
       return this._update(planId, current => {
         const currentOperation = current.operations.find(item => item.operationId === operationId);
         currentOperation.state = 'RUNNING';
@@ -548,25 +585,55 @@ class LaunchCoordinator extends EventEmitter {
 
   async _failAndRelease(planId, operationId, runtime, reason, state, metadata) {
     const environmentId = runtime.environments.get(operationId);
-    if (environmentId && !runtime.capabilities.has(operationId)) {
+    const capability = runtime.capabilities.get(operationId);
+    if (capability) {
       const cleanupMetadata = Object.assign({}, metadata, {
         failureCode: 'CLEANUP_UNCONFIRMED',
         failureStage: 'cleanup',
       });
+      let stopped;
       try {
-        const released = await this.adapter.release(environmentId);
-        if (released && released.ok && released.released) {
-          runtime.environments.delete(operationId);
-        } else {
-          return this._failOperation(
-            planId,
-            operationId,
-            `${reason} Environment release was not confirmed: ${released && released.reason || 'unknown release result'}`,
-            'UNKNOWN', cleanupMetadata,
-          );
-        }
+        stopped = await this.adapter.stop(capability, { operationId, environmentId });
+      } catch (error) {
+        return this._failOperation(
+          planId,
+          operationId,
+          `${reason} Exact launched-process cleanup was not confirmed: ${error.message}`,
+          'UNKNOWN', cleanupMetadata,
+        );
+      }
+      if (!(stopped && stopped.ok && stopped.confirmed)) {
+        return this._failOperation(
+          planId,
+          operationId,
+          `${reason} Exact launched-process cleanup was not confirmed: ${stopped && stopped.reason || 'unknown stop result'}`,
+          'UNKNOWN', cleanupMetadata,
+        );
+      }
+      this.operationCapabilities.delete(operationId);
+      runtime.capabilities.delete(operationId);
+    }
+    if (environmentId) {
+      const cleanupMetadata = Object.assign({}, metadata, {
+        failureCode: 'CLEANUP_UNCONFIRMED',
+        failureStage: 'cleanup',
+      });
+      let released;
+      try {
+        released = await this.adapter.release(environmentId);
       } catch (error) {
         return this._failOperation(planId, operationId, `${reason} Environment release was not confirmed: ${error.message}`, 'UNKNOWN', cleanupMetadata);
+      }
+      if (released && released.ok && released.released) {
+        runtime.environments.delete(operationId);
+        this.operationEnvironments.delete(operationId);
+      } else {
+        return this._failOperation(
+          planId,
+          operationId,
+          `${reason} Environment release was not confirmed: ${released && released.reason || 'unknown release result'}`,
+          'UNKNOWN', cleanupMetadata,
+        );
       }
     }
     return this._failOperation(planId, operationId, reason, state, metadata);
@@ -610,17 +677,19 @@ class LaunchCoordinator extends EventEmitter {
     const plan = this.store.get(planId);
     const operation = plan && plan.operations.find(item => item.operationId === operationId);
     const capability = this.operationCapabilities.get(operationId);
-    if (!operation || operation.state !== 'RUNNING' || !capability) return { ok: false, error: 'No running owned operation matches that request.' };
+    const environmentId = this.operationEnvironments.get(operationId) || (operation && operation.environmentId);
+    if (!operation || !capability) return { ok: false, error: 'No owned operation with exact process authority matches that request.' };
     if (this.lifecycleActions.has(operationId)) {
       return { ok: false, error: `A lifecycle action is already in progress for this client.` };
     }
     this.lifecycleActions.set(operationId, 'stop');
     try {
-      const stopped = await this.adapter.stop(capability, { environmentId: operation.environmentId });
+      const stopped = await this.adapter.stop(capability, { environmentId });
       if (!(stopped && stopped.ok && stopped.confirmed)) return { ok: false, error: stopped && stopped.reason || 'Owned stop was not confirmed.' };
+      this.operationCapabilities.delete(operationId);
       let released;
       try {
-        released = await this.adapter.release(operation.environmentId);
+        released = await this.adapter.release(environmentId);
       } catch (error) {
         released = {
           ok: false,
@@ -632,17 +701,23 @@ class LaunchCoordinator extends EventEmitter {
         const updated = this._update(planId, current => {
           const item = current.operations.find(value => value.operationId === operationId);
           item.state = 'UNKNOWN'; item.reason = released && released.reason || 'Owned process stopped, but environment release was not confirmed.';
-          item.capability = null; item.pid = null; item.updatedAt = nowIso(this.now); return current;
+          item.failureCode = 'CLEANUP_UNCONFIRMED'; item.failureStage = 'cleanup';
+          item.capability = null; item.pid = null; item.environmentId = environmentId;
+          item.updatedAt = nowIso(this.now);
+          current.state = PLAN_STATES.RECOVERY_REQUIRED;
+          current.reason = 'Owned process stopped, but environment cleanup could not be confirmed.';
+          current.failureCode = 'CLEANUP_UNCONFIRMED';
+          return current;
         });
-        this.operationCapabilities.delete(operationId);
         return { ok: false, error: updated.operations.find(item => item.operationId === operationId).reason, plan: updated };
       }
       const updated = this._update(planId, current => {
         const item = current.operations.find(value => value.operationId === operationId);
         item.state = 'STOPPED';
-        item.capability = null; item.pid = null; item.updatedAt = nowIso(this.now); return current;
+        item.capability = null; item.pid = null; item.environmentId = environmentId;
+        item.updatedAt = nowIso(this.now); return current;
       });
-      this.operationCapabilities.delete(operationId);
+      this.operationEnvironments.delete(operationId);
       return { ok: true, plan: updated };
     } finally {
       this.lifecycleActions.delete(operationId);
@@ -664,39 +739,133 @@ class LaunchCoordinator extends EventEmitter {
       const resolved = await this.resolveIntent(copy(operation), {});
       if (!resolved || !resolved.ok || !resolved.intent) return { ok: false, error: resolved && resolved.reason || 'Launch intent could not be resolved.' };
       const restarted = await this.adapter.restart(resolved.intent, {
-        environmentId: operation.environmentId,
+        environmentId: this.operationEnvironments.get(operationId) || operation.environmentId,
         capability,
         operation: copy(operation),
       });
-      if (!isActivated(restarted) || !restarted.capability) {
+      if (!isActivated(restarted) || restarted.ok === false || !restarted.capability) {
         if (restarted && restarted.previousStopped) {
+          const recoveryRequired = !!restarted.capability || restarted.status === 'UNKNOWN';
+          if (restarted.capability) {
+            this.operationCapabilities.set(operationId, restarted.capability);
+            this.operationEnvironments.set(operationId, restarted.environmentId || operation.environmentId);
+          } else {
+            this.operationCapabilities.delete(operationId);
+            if (recoveryRequired && restarted.environmentId) {
+              this.operationEnvironments.set(operationId, restarted.environmentId);
+            }
+          }
           const updated = this._update(planId, current => {
             const item = current.operations.find(value => value.operationId === operationId);
-            item.state = restarted.status === 'UNKNOWN' ? 'UNKNOWN' : 'STOPPED';
+            item.state = recoveryRequired ? 'UNKNOWN' : 'STOPPED';
             item.reason = restarted.reason || 'Restart failed after the previous owned process stopped.';
             item.capability = null;
-            item.pid = null;
+            item.pid = restarted.capability ? Number(restarted.pid) || null : null;
+            item.environmentId = restarted.environmentId || item.environmentId;
+            item.instanceId = restarted.instanceId || item.instanceId;
+            if (recoveryRequired) {
+              item.failureCode = 'CLEANUP_UNCONFIRMED';
+              item.failureStage = 'cleanup';
+              current.state = PLAN_STATES.RECOVERY_REQUIRED;
+              current.reason = 'Restart cleanup could not be confirmed.';
+              current.failureCode = 'CLEANUP_UNCONFIRMED';
+            }
             item.updatedAt = nowIso(this.now);
             return current;
           });
-          this.operationCapabilities.delete(operationId);
-          return { ok: false, error: restarted.reason || 'Restart failed after the previous owned process stopped.', plan: updated };
+          if (!recoveryRequired) {
+            this.operationEnvironments.delete(operationId);
+          }
+          return {
+            ok: false,
+            error: restarted.reason || 'Restart failed after the previous owned process stopped.',
+            plan: this._withRuntimeCapabilities(updated),
+          };
         }
         return { ok: false, error: restarted && restarted.reason || 'Restart failed.' };
       }
-      const updated = this._update(planId, current => {
-        const item = current.operations.find(value => value.operationId === operationId);
-        item.state = 'RUNNING'; item.capability = null; item.pid = Number(restarted.pid) || null;
-        item.environmentId = restarted.environmentId || item.environmentId;
-        item.instanceId = restarted.instanceId || item.instanceId;
-        item.updatedAt = nowIso(this.now); return current;
-      });
       this.operationCapabilities.set(operationId, restarted.capability);
+      this.operationEnvironments.set(operationId, restarted.environmentId || operation.environmentId);
+      let updated;
+      try {
+        updated = this._update(planId, current => {
+          const item = current.operations.find(value => value.operationId === operationId);
+          item.state = 'RUNNING'; item.capability = null; item.pid = Number(restarted.pid) || null;
+          item.environmentId = restarted.environmentId || item.environmentId;
+          item.instanceId = restarted.instanceId || item.instanceId;
+          item.updatedAt = nowIso(this.now); return current;
+        });
+      } catch (error) {
+        return this._rollbackUnrecordedRestart(planId, operationId, restarted, operation, error);
+      }
       const materialized = this._withRuntimeCapabilities(updated);
       return { ok: true, plan: materialized, operation: materialized.operations.find(item => item.operationId === operationId) };
     } finally {
       this.lifecycleActions.delete(operationId);
     }
+  }
+
+  async _rollbackUnrecordedRestart(planId, operationId, restarted, previousOperation, persistenceError) {
+    const environmentId = restarted.environmentId || previousOperation.environmentId;
+    const reason = `Restart state could not be recorded: ${persistenceError && persistenceError.message || 'unknown state error'}`;
+    let stopped;
+    try {
+      stopped = await this.adapter.stop(restarted.capability, { operationId, environmentId });
+    } catch (error) {
+      stopped = { ok: false, confirmed: false, reason: error && error.message || 'unknown stop error' };
+    }
+
+    if (!(stopped && stopped.ok && stopped.confirmed)) {
+      const updated = this._update(planId, current => {
+        const item = current.operations.find(value => value.operationId === operationId);
+        item.state = 'UNKNOWN';
+        item.reason = `${reason} Exact replacement-process cleanup was not confirmed: ${stopped && stopped.reason || 'unknown stop result'}`;
+        item.failureCode = 'CLEANUP_UNCONFIRMED';
+        item.failureStage = 'cleanup';
+        item.capability = null;
+        item.pid = Number(restarted.pid) || null;
+        item.environmentId = environmentId;
+        item.instanceId = restarted.instanceId || item.instanceId;
+        item.updatedAt = nowIso(this.now);
+        current.state = PLAN_STATES.RECOVERY_REQUIRED;
+        current.reason = 'Restart cleanup could not be confirmed.';
+        current.failureCode = 'CLEANUP_UNCONFIRMED';
+        return current;
+      });
+      const materialized = this._withRuntimeCapabilities(updated);
+      return { ok: false, error: materialized.operations.find(item => item.operationId === operationId).reason, plan: materialized };
+    }
+
+    this.operationCapabilities.delete(operationId);
+    let released;
+    try {
+      released = await this.adapter.release(environmentId);
+    } catch (error) {
+      released = { ok: false, released: false, reason: error && error.message || 'unknown release error' };
+    }
+    const cleanupConfirmed = !!(released && released.ok && released.released);
+    if (cleanupConfirmed) this.operationEnvironments.delete(operationId);
+    const updated = this._update(planId, current => {
+      const item = current.operations.find(value => value.operationId === operationId);
+      item.state = cleanupConfirmed ? 'STOPPED' : 'UNKNOWN';
+      item.reason = cleanupConfirmed
+        ? `${reason} The exact replacement process was stopped and its environment was released.`
+        : `${reason} The exact replacement process stopped, but environment cleanup was not confirmed: ${released && released.reason || 'unknown release result'}`;
+      item.failureCode = cleanupConfirmed ? 'STATE_PERSISTENCE_FAILED' : 'CLEANUP_UNCONFIRMED';
+      item.failureStage = cleanupConfirmed ? 'state' : 'cleanup';
+      item.capability = null;
+      item.pid = null;
+      item.environmentId = environmentId;
+      item.instanceId = restarted.instanceId || item.instanceId;
+      item.updatedAt = nowIso(this.now);
+      if (!cleanupConfirmed) {
+        current.state = PLAN_STATES.RECOVERY_REQUIRED;
+        current.reason = 'Restart environment cleanup could not be confirmed.';
+        current.failureCode = 'CLEANUP_UNCONFIRMED';
+      }
+      return current;
+    });
+    return { ok: false, error: updated.operations.find(item => item.operationId === operationId).reason, plan: updated };
   }
 
   async _stopRuntime(runtime) {
@@ -717,6 +886,7 @@ class LaunchCoordinator extends EventEmitter {
         const released = await this.adapter.release(runtime.environments.get(operationId));
         if (released && released.ok && released.released) {
           runtime.environments.delete(operationId);
+          this.operationEnvironments.delete(operationId);
           outcomes.set(operationId, {
             state: 'STOPPED', processExited: true, reason: 'Launch plan was cancelled.',
           });
@@ -745,12 +915,12 @@ class LaunchCoordinator extends EventEmitter {
     });
   }
 
-  _bounded(promise, signal, message) {
+  _bounded(promise, signal, message, options) {
     return new Promise((resolve, reject) => {
       const abortReason = () => signal && signal.reason && signal.reason.name === 'TimeoutError'
         ? new Error(message)
         : (signal && signal.reason || new Error('Cancelled.'));
-      if (signal && signal.aborted) return reject(abortReason());
+      if (signal && signal.aborted && !(options && options.settleOnAbort)) return reject(abortReason());
       // Dependencies receive the earlier operation abort. This outer grace is
       // only for providers that fail to settle after bounded revocation and
       // exact-environment cleanup have been requested.
@@ -759,7 +929,7 @@ class LaunchCoordinator extends EventEmitter {
         clearTimeout(timer);
         reject(error && error.name === 'TimeoutError' ? new Error(message) : error);
       });
-      if (signal) signal.addEventListener('abort', () => {
+      if (signal && !(options && options.settleOnAbort)) signal.addEventListener('abort', () => {
         if (signal.reason && signal.reason.name === 'TimeoutError') return;
         clearTimeout(timer);
         reject(abortReason());

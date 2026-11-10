@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 
 const { CapabilityGates, STATES } = require('../src/main/capability-gates');
 const { ProcessCapabilityRegistry } = require('../src/main/process-capabilities');
@@ -289,6 +290,139 @@ test('stopping account polling cancels both recurring and delayed startup work',
   }
 });
 
+test('account polling persists an exact server change within the same place', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sunday-account-presence-'));
+  const database = new StateDatabase({ path: path.join(dir, 'state.sqlite3'), assertOwner: () => true });
+  const original = {
+    fetch: global.fetch,
+    setInterval: global.setInterval,
+    clearInterval: global.clearInterval,
+    setTimeout: global.setTimeout,
+    clearTimeout: global.clearTimeout,
+  };
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString(value) { return Buffer.concat([Buffer.from('protected:'), Buffer.from(value)]); },
+    decryptString(value) { return Buffer.from(value).subarray(Buffer.byteLength('protected:')).toString('utf8'); },
+  };
+  let tick = null;
+  let presenceRecord = {
+    userId: 42,
+    userPresenceType: 2,
+    lastLocation: 'Synthetic Place',
+    placeId: 123,
+    rootPlaceId: 123,
+    gameId: 'server-old',
+  };
+  let fetchGate = null;
+  let fetchReached = null;
+  try {
+    accounts.configure({ baseDir: dir, database, safeStorage, logger: { info() {}, warn() {}, error() {} } });
+    database.put('documents', 'accounts.json', [{
+      id: 'account-1',
+      userId: 42,
+      username: 'synthetic',
+      displayName: 'Synthetic',
+      cookie: 'enc:' + Buffer.from('protected:synthetic-cookie').toString('base64'),
+      presence: 'In game',
+      game: { name: 'Synthetic Place', placeId: 123, rootPlaceId: 123, gameId: 'server-old' },
+      economyAt: Date.now(),
+      profileAt: Date.now(),
+      revision: 0,
+    }], { expectedRevision: 0 });
+    global.fetch = async () => {
+      const snapshot = JSON.parse(JSON.stringify(presenceRecord));
+      if (fetchReached) fetchReached();
+      if (fetchGate) await fetchGate;
+      return new Response(JSON.stringify({ userPresences: [snapshot] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    global.setInterval = fn => { tick = fn; return { type: 'interval' }; };
+    global.clearInterval = () => {};
+    global.setTimeout = () => ({ type: 'timeout' });
+    global.clearTimeout = () => {};
+
+    accounts.startPolling({ intervalMs: 12000 });
+    assert.equal(typeof tick, 'function');
+
+    const stored = () => database.get('documents', 'accounts.json', []).value[0];
+    await tick();
+    assert.equal(stored().revision, 0);
+
+    presenceRecord = Object.assign({}, presenceRecord, { lastLocation: 'Renamed Place' });
+    await tick();
+    assert.equal(stored().game.name, 'Renamed Place');
+    assert.equal(stored().revision, 1);
+
+    presenceRecord = Object.assign({}, presenceRecord, { placeId: 124 });
+    await tick();
+    assert.equal(stored().game.placeId, 124);
+    assert.equal(stored().revision, 2);
+
+    presenceRecord = Object.assign({}, presenceRecord, { rootPlaceId: 124 });
+    await tick();
+    assert.equal(stored().game.rootPlaceId, 124);
+    assert.equal(stored().revision, 3);
+
+    presenceRecord = Object.assign({}, presenceRecord, { gameId: 'server-new' });
+    await tick();
+    assert.equal(accounts.list()[0].game.gameId, 'server-new');
+    assert.equal(stored().revision, 4);
+    await tick();
+    assert.equal(stored().revision, 4);
+
+    presenceRecord = { userId: 42, userPresenceType: 2 };
+    await tick();
+    assert.deepEqual(stored().game, {
+      name: 'In an experience', placeId: null, rootPlaceId: null, gameId: null,
+    });
+    const missingRevision = stored().revision;
+    await tick();
+    assert.equal(stored().revision, missingRevision);
+
+    presenceRecord = { userId: 42, userPresenceType: 1 };
+    await tick();
+    assert.equal(stored().presence, 'Online');
+    assert.equal(stored().game, null);
+
+    presenceRecord = { userId: 42, userPresenceType: 99 };
+    await tick();
+    assert.equal(stored().presence, 'Unknown');
+    assert.equal(stored().game, null);
+
+    presenceRecord = {
+      userId: 42, userPresenceType: 2, lastLocation: 'Serialized response',
+      placeId: 500, rootPlaceId: 500, gameId: 'serialized-old',
+    };
+    let releaseFetch;
+    fetchGate = new Promise(resolve => { releaseFetch = resolve; });
+    const reached = new Promise(resolve => { fetchReached = resolve; });
+    const first = tick();
+    await reached;
+    presenceRecord = Object.assign({}, presenceRecord, { gameId: 'serialized-new' });
+    await tick();
+    releaseFetch();
+    await first;
+    assert.equal(stored().game.gameId, 'serialized-old');
+
+    fetchGate = null;
+    fetchReached = null;
+    await tick();
+    assert.equal(stored().game.gameId, 'serialized-new');
+  } finally {
+    accounts.stopPolling();
+    global.fetch = original.fetch;
+    global.setInterval = original.setInterval;
+    global.clearInterval = original.clearInterval;
+    global.setTimeout = original.setTimeout;
+    global.clearTimeout = original.clearTimeout;
+    database.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('people friend cache invalidation reflects account membership changes', async () => {
   const original = {
     fetch: global.fetch,
@@ -329,6 +463,98 @@ test('people friend cache invalidation reflects account membership changes', asy
     accounts.presenceForIds = original.presenceForIds;
     global.fetch = original.fetch;
   }
+});
+
+test('missing authenticated presence evidence is reported as unknown, not offline', async () => {
+  const original = {
+    hasSession: accounts.hasSession,
+    presenceForIds: accounts.presenceForIds,
+  };
+  try {
+    accounts.hasSession = () => false;
+    let response = await people.presence([7001]);
+    assert.equal(response.people[0].presence, 'Unknown');
+    assert.equal(response.people[0].canJoin, false);
+
+    accounts.hasSession = () => true;
+    accounts.presenceForIds = async () => new Map();
+    response = await people.presence([7001]);
+    assert.equal(response.ok, true);
+    assert.equal(response.people[0].presence, 'Unknown');
+    assert.equal(response.people[0].canJoin, false);
+  } finally {
+    accounts.hasSession = original.hasSession;
+    accounts.presenceForIds = original.presenceForIds;
+  }
+});
+
+test('invalid presence evidence remains unknown while explicit states retain their meaning', async () => {
+  const original = {
+    hasSession: accounts.hasSession,
+    presenceForIds: accounts.presenceForIds,
+  };
+  try {
+    accounts.hasSession = () => true;
+    accounts.presenceForIds = async () => new Map([
+      [7001, { status: 'invalid-upstream-value', placeId: 123, gameId: 'must-not-join' }],
+      [7002, { status: 'Offline' }],
+      [7003, { status: 'In game', lastLocation: 'Synthetic', placeId: 123, gameId: 'server-1' }],
+      [7004, { status: 'Online' }],
+    ]);
+    const response = await people.presence([7001, 7002, 7003, 7004]);
+    assert.deepEqual(response.people.map(item => item.presence), ['Unknown', 'Offline', 'In game', 'Online']);
+    assert.deepEqual(response.people.map(item => item.canJoin), [false, false, true, false]);
+    assert.equal(response.people[0].game, null);
+  } finally {
+    accounts.hasSession = original.hasSession;
+    accounts.presenceForIds = original.presenceForIds;
+  }
+});
+
+test('stale People presence completion cannot overwrite a newer rendered collection', async () => {
+  let releasePresence;
+  const gate = new Promise(resolve => { releasePresence = resolve; });
+  const oldList = [{ userId: 7001, presence: 'Offline', canJoin: false, game: null }];
+  const newer = { userId: 7001, presence: 'In game', canJoin: true, game: { name: 'New', placeId: 2, gameId: 'new' } };
+  const state = {
+    view: 'people',
+    people: {
+      route: 'friends',
+      list: oldList,
+      search: { searched: false, list: [] },
+      detail: { profile: null },
+    },
+  };
+  const context = vm.createContext({
+    api: { people: { presence() {} } },
+    call: async () => {
+      await gate;
+      return { ok: true, people: [{ userId: 7001, presence: 'Online', canJoin: false, game: null }] };
+    },
+    document: { hidden: false },
+    state,
+    views: {},
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'views', 'people.js'), 'utf8'), context);
+  assert.equal(
+    vm.runInContext("peopleCountsText([{ presence: 'Unknown' }, { presence: 'Offline' }])", context),
+    '0 in game · 0 online · 1 offline · 1 unknown',
+  );
+  assert.equal(
+    vm.runInContext("peopleCountsText([{}, { presence: 'invalid' }, { presence: 'Offline' }])", context),
+    '0 in game · 0 online · 1 offline · 2 unknown',
+  );
+  assert.equal(vm.runInContext("peoplePresenceValue({})", context), 'Unknown');
+  state.people.filter = 'offline';
+  assert.equal(vm.runInContext("personMatchesFilter({})", context), false);
+  state.people.filter = 'all';
+
+  const pending = vm.runInContext('refreshVisiblePeoplePresence()', context);
+  state.people.list = [newer];
+  releasePresence();
+  await pending;
+  assert.equal(state.people.list[0].presence, 'In game');
+  assert.equal(state.people.list[0].game.gameId, 'new');
 });
 
 test('people invalidation during an in-flight load returns the current account-derived list', async () => {

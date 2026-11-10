@@ -13,6 +13,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { fileURLToPath } = require('url');
 const { execFileSync } = require('child_process');
 
 const PLAYER_EXE = 'RobloxPlayerBeta.exe';
@@ -135,21 +136,26 @@ function normalizePlayerPath(value, dependencies = {}) {
   const environment = dependencies.env || process.env;
   try {
     if (!value || typeof value !== 'string') return '';
-    let raw = expandEnvVars(value, environment).trim();
+    let raw = value.trim();
     if (!raw) return '';
-    raw = raw.replace(/^file:\/+/i, '');
-    raw = raw.replace(/[\\/]+/g, path.sep);
-
-    const quoted = raw.match(/"([^"]*RobloxPlayerBeta\.exe)"/i);
-    if (quoted) raw = quoted[1];
-    else {
-      const exeIndex = raw.toLowerCase().indexOf(PLAYER_EXE.toLowerCase());
-      if (exeIndex >= 0) raw = raw.slice(0, exeIndex + PLAYER_EXE.length);
+    if (/^HKEY_[A-Z_]+\\/i.test(raw)) {
+      const row = raw.match(/^[ \t]*[^\r\n]+?[ \t]+REG_(?:EXPAND_)?SZ[ \t]+([^\r\n]+)/im);
+      if (!row) return '';
+      raw = row[1].trim();
     }
-
-    raw = raw.trim().replace(/^["']|["']$/g, '').trim();
+    if (/^"[^"]*"$/.test(raw) || /^'[^']*'$/.test(raw)) {
+      raw = raw.slice(1, -1);
+    }
+    if (/^file:/i.test(raw)) {
+      const url = new URL(raw);
+      if (url.search || url.hash) return '';
+      raw = fileURLToPath(url);
+    } else raw = expandEnvVars(raw, environment);
+    raw = raw.replace(/\//g, path.sep);
     while (/[\\/]$/.test(raw)) raw = raw.slice(0, -1);
 
+    // Resolve literal paths before parsing protocol command arguments. A
+    // directory can itself contain the executable name or whitespace.
     if (fileSystem.existsSync(raw)) {
       const stat = fileSystem.statSync(raw);
       if (stat.isDirectory()) {
@@ -159,6 +165,14 @@ function normalizePlayerPath(value, dependencies = {}) {
       if (stat.isFile() && path.basename(raw).toLowerCase() === PLAYER_EXE.toLowerCase()) return path.resolve(raw);
     }
 
+    const quoted = raw.match(/^"([^"]*RobloxPlayerBeta\.exe)"(?:[ \t]|$)/i)
+      || raw.match(/^'([^']*RobloxPlayerBeta\.exe)'(?:[ \t]|$)/i);
+    if (quoted) raw = quoted[1];
+    else {
+      const exeIndex = raw.toLowerCase().lastIndexOf(PLAYER_EXE.toLowerCase());
+      const end = exeIndex + PLAYER_EXE.length;
+      if (exeIndex >= 0 && (end === raw.length || /^[ \t]/.test(raw.slice(end)))) raw = raw.slice(0, end);
+    }
     if (path.basename(raw).toLowerCase() === PLAYER_EXE.toLowerCase()) return path.resolve(raw);
     return '';
   } catch (_) {
@@ -252,6 +266,23 @@ function appxCandidateFromMetadata(packageMetadata, dependencies = {}) {
 
 function sourceRank(source) {
   return ({ manual: 600, registry: 500, process: 400, 'appx-registration': 300, filesystem: 200 })[source] || 0;
+}
+
+function compareClassicVersions(left, right) {
+  const parse = value => {
+    const text = String(value || '').trim();
+    if (!/^\d+(?:\s*[.,]\s*\d+){1,3}$/.test(text)) return null;
+    const parts = text.split(/\s*[.,]\s*/).map(Number);
+    return parts.every(Number.isSafeInteger) ? parts : null;
+  };
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  if (!leftParts || !rightParts) return 0;
+  for (let index = 0; index < 4; index += 1) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (difference) return difference;
+  }
+  return 0;
 }
 
 function mergeCandidates(candidates) {
@@ -412,6 +443,9 @@ function createDiscoveryEngine(customDependencies = {}) {
     const manual = normalizePlayerPath(settings.robloxPath || '', dependencies);
     if (manual) recordPathEvidence(manual, 'manual');
     else if (String(settings.robloxPath || '').trim()) warnings.push('The selected manual Roblox path is not a RobloxPlayerBeta.exe path.');
+    // Preserve custom installations across default migration without pinning
+    // selection: verification and newest-compatible ranking still apply.
+    if (settings.robloxDiscoveryPath) recordPathEvidence(settings.robloxDiscoveryPath, 'filesystem');
 
     const registryValues = queryRegistry();
     for (const value of Object.values(registryValues)) {
@@ -447,9 +481,17 @@ function createDiscoveryEngine(customDependencies = {}) {
     if (selectedId) selected = candidates.find(candidate => candidate.id === selectedId) || null;
     if (!selected && manual) selected = candidates.find(candidate => candidate.source === 'manual') || null;
     if (!selected && settings.autoDetect !== false) {
-      selected = settings.multiInstanceMode === true
-        ? candidates.find(candidate => candidate.legacyCompatible) || candidates[0] || null
-        : candidates[0] || null;
+      const automatic = settings.multiInstanceMode === true
+        ? candidates.filter(candidate => candidate.legacyCompatible) : candidates;
+      selected = automatic[0] || candidates[0] || null;
+      // Protocol registrations can still point to an old player that opens
+      // the updater. Prefer a newer verified classic version automatically.
+      if (selected && selected.kind === 'classic-win32') {
+        for (const candidate of automatic) {
+          if (candidate.kind === 'classic-win32'
+              && compareClassicVersions(candidate.version, selected.version) > 0) selected = candidate;
+        }
+      }
     }
     if (!selectedId && settings.autoDetect === false && !manual) selected = null;
 
@@ -471,6 +513,7 @@ function createDiscoveryEngine(customDependencies = {}) {
   function cacheKey(settings) {
     return JSON.stringify({
       robloxPath: String(settings && settings.robloxPath || ''),
+      robloxDiscoveryPath: String(settings && settings.robloxDiscoveryPath || ''),
       robloxInstallationId: String(settings && settings.robloxInstallationId || ''),
       autoDetect: settings && settings.autoDetect !== false,
       multiInstanceMode: settings && settings.multiInstanceMode === true,

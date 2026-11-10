@@ -42,8 +42,7 @@ function resolveLegacyCompatibility(settings, environment) {
     ? String(sourceEnvironment.LEGACY_COMPAT)
     : 'ABSENT';
   const environmentEnabled = legacyCompatRequested(sourceEnvironment);
-  const hasPersistedPreference = !!(settings && Object.prototype.hasOwnProperty.call(settings, 'multiInstanceMode'));
-  const settingEnabled = hasPersistedPreference ? settings.multiInstanceMode === true : true;
+  const settingEnabled = store.normalizeSettings(settings).multiInstanceMode;
   const enabled = environmentEnabled || settingEnabled;
   return Object.freeze({
     enabled,
@@ -842,6 +841,7 @@ function makeBackend(ctx) {
   }
 
   async function shutdown() {
+    await launchCoordinator.shutdown();
     try { if (monitor) monitor.stop(); } catch (_) {}
     try { accounts.stopPolling(); } catch (_) {}
     try { playtime.flush(); } catch (_) {}

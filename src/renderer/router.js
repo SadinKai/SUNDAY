@@ -23,6 +23,37 @@ async function call(fn, fallback, timeoutMs) {
   }
 }
 
+// Launch requests mutate external process state after they cross the bridge.
+// Keep the renderer correlated with the authoritative completion response so a
+// presentation timeout cannot invite a duplicate retry while work continues.
+let launchMutationPending = false;
+let launchResultUnresolved = false;
+function unresolvedLaunchResult(reason) {
+  return {
+    ok: false,
+    unresolved: true,
+    failureCode: 'LAUNCH_RESULT_UNKNOWN',
+    error: String(reason || 'A launch request is still pending. Wait for it to finish or inspect Launch Plans and Diagnostics before trying again.'),
+    actions: ['VIEW_DIAGNOSTICS'],
+  };
+}
+async function callLaunch(fn) {
+  if (launchResultUnresolved) {
+    return unresolvedLaunchResult('The result of an earlier launch request is unknown. Inspect Launch Plans and Diagnostics before starting another launch.');
+  }
+  if (launchMutationPending) return unresolvedLaunchResult();
+  launchMutationPending = true;
+  try {
+    if (!api) throw new Error('SUNDAY Launcher bridge unavailable (run inside the SUNDAY Launcher app).');
+    return await Promise.resolve().then(fn);
+  } catch (_) {
+    launchResultUnresolved = true;
+    return unresolvedLaunchResult('The launch connection ended before SUNDAY received a completion result. The launch may still have changed process state; do not retry until Launch Plans and Diagnostics are checked.');
+  } finally {
+    launchMutationPending = false;
+  }
+}
+
 /* ----------------------------- Router ----------------------------- */
 const views = {};
 let renderedView = null;

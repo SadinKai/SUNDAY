@@ -18,10 +18,12 @@ const crypto = require('crypto');
 const { StateDatabase } = require('./state-database');
 
 const DEFAULT_SETTINGS = Object.freeze({
+  launchDefaultsVersion: 1, // older profiles receive the recommended launch setup once
   robloxPath: '',            // manual override; empty = auto-detect
+  robloxDiscoveryPath: '',   // previous manual installation, discovery evidence only
   robloxInstallationId: '',  // stable, non-path identity for a discovered installation
   autoDetect: true,
-  multiInstanceMode: true,   // fresh-install default; explicit false remains disabled
+  multiInstanceMode: true,   // enabled on install/upgrade; later opt-outs remain saved
   pollIntervalMs: 2000,      // process monitor refresh
   launchDelayMs: 5000,       // delay between instances so each boots first
   confirmCleanup: true,      // confirm before "End all"
@@ -167,15 +169,39 @@ function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function getSettings() {
   const s = readJson('settings.json', DEFAULT_SETTINGS);
   if (!s || typeof s !== 'object' || Array.isArray(s)) throw new Error('settings.json has the wrong schema.');
+  if (needsLaunchDefaults(s)) {
+    return updateJson('settings.json', DEFAULT_SETTINGS, current => normalizeSettings(withLaunchDefaults(current)));
+  }
   return normalizeSettings(s);
+}
+
+function needsLaunchDefaults(settings) {
+  return !Number.isInteger(settings.launchDefaultsVersion)
+    || settings.launchDefaultsVersion < DEFAULT_SETTINGS.launchDefaultsVersion;
+}
+
+function withLaunchDefaults(settings) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('settings.json has the wrong schema.');
+  if (!needsLaunchDefaults(settings)) return settings;
+  return Object.assign({}, settings, {
+    launchDefaultsVersion: DEFAULT_SETTINGS.launchDefaultsVersion,
+    multiInstanceMode: true,
+    autoDetect: true,
+    robloxDiscoveryPath: typeof settings.robloxPath === 'string' && settings.robloxPath.trim()
+      ? settings.robloxPath : settings.robloxDiscoveryPath || '',
+    robloxPath: '',
+    robloxInstallationId: '',
+  });
 }
 
 function normalizeSettings(input) {
   const s = Object.assign({}, DEFAULT_SETTINGS, input || {});
   s.robloxPath = typeof s.robloxPath === 'string' ? s.robloxPath : '';
+  s.robloxDiscoveryPath = typeof s.robloxDiscoveryPath === 'string' ? s.robloxDiscoveryPath : '';
   s.robloxInstallationId = typeof s.robloxInstallationId === 'string' ? s.robloxInstallationId : '';
   s.autoDetect = !!s.autoDetect;
-  s.multiInstanceMode = s.multiInstanceMode === true;
+  s.multiInstanceMode = typeof s.multiInstanceMode === 'boolean'
+    ? s.multiInstanceMode : DEFAULT_SETTINGS.multiInstanceMode;
   s.confirmCleanup = !!s.confirmCleanup;
   s.pollIntervalMs = clampInt(s.pollIntervalMs, 750, 10000, DEFAULT_SETTINGS.pollIntervalMs);
   s.launchDelayMs = clampInt(s.launchDelayMs, 0, 20000, DEFAULT_SETTINGS.launchDelayMs);
@@ -194,8 +220,10 @@ function clampInt(v, min, max, dflt) {
 }
 
 function saveSettings(partial) {
+  const patch = Object.assign({}, partial || {});
+  delete patch.launchDefaultsVersion;
   return updateJson('settings.json', DEFAULT_SETTINGS, current =>
-    normalizeSettings(Object.assign({}, current, partial || {})));
+    normalizeSettings(Object.assign({}, withLaunchDefaults(current), patch)));
 }
 
 function resetSettings() {

@@ -61,6 +61,13 @@ class ProcessCapabilityRegistry {
     if (!fingerprint.processIdentity || fingerprint.executablePath !== expectedPath) {
       throw new Error('The launched process identity could not be proven.');
     }
+    const expected = metadata && metadata.expectedFingerprint;
+    if (expected && (!expected.processIdentity || !expected.fileIdentity
+        || fingerprint.processIdentity !== String(expected.processIdentity)
+        || fingerprint.executablePath !== normalized(expected.executablePath)
+        || fingerprint.fileIdentity !== String(expected.fileIdentity))) {
+      throw new Error('The launched process identity changed before ownership could be bound.');
+    }
     const now = this.now();
     const token = crypto.randomBytes(32).toString('base64url');
     this.records.set(token, {

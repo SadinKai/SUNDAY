@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, release/v1.8.19]
   pull_request:
   workflow_dispatch:
 
@@ -66,6 +66,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cargo audit --file src-tauri/Cargo.lock
           cargo audit --file installer/Cargo.lock
 
@@ -73,6 +74,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
           cargo fmt --manifest-path installer/Cargo.toml --all -- --check
 
@@ -80,6 +82,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cargo check --locked --manifest-path src-tauri/Cargo.toml
           cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
           cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features

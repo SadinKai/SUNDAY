@@ -102,8 +102,12 @@ for (const file of [...files].sort()) {
   if (buffer.includes(0)) continue;
   const text = buffer.toString('utf8');
   for (const rule of rules) {
-    const match = rule.pattern.exec(text);
-    if (match) findings.push({ file: filePath, line: lineNumber(text, match.index), rule: rule.name });
+    // Source and JSON commonly escape backslashes; profile privacy applies to
+    // those spellings and forward-slash paths as well as literal Windows paths.
+    const ruleText = rule.name === 'Personal Windows profile path'
+      ? text.replace(/\\{2,}/g, '\\').replace(/\//g, '\\') : text;
+    const match = rule.pattern.exec(ruleText);
+    if (match) findings.push({ file: filePath, line: lineNumber(ruleText, match.index), rule: rule.name });
   }
   if (/^\.env(?:\.|$)/i.test(path.basename(file)) && !/\.example$/i.test(file)) {
     const lines = text.split(/\r?\n/);

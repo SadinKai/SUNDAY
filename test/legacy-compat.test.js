@@ -141,14 +141,13 @@ function fixture(options = {}) {
   monitor.markManaged = (pid, metadata) => monitor.managed.set(pid, metadata);
   monitor.forget = pid => monitor.managed.delete(pid);
   const registry = new ProcessCapabilityRegistry(native);
-  const adapter = new LegacyRobloxIsolationAdapter({
-    logger: { info() {}, warn() {}, error() {} },
+  const adapterOptions = {
+    logger: options.logger || { info() {}, warn() {}, error() {} },
     nativeApi: native,
     legacyNativeApi: legacyNative,
     processCapabilities: registry,
     ownerId: 'test-owner',
     monitor,
-    cloneManager,
     locateRoblox: () => ({ found: true, playerPath: 'C:\\Roblox\\version-1\\RobloxPlayerBeta.exe' }),
     spawnProcess(executablePath) {
       const pid = nextPid++;
@@ -160,7 +159,10 @@ function fixture(options = {}) {
     launchTimeoutMs: 500,
     requireWindow: true,
     forensicPath: options.forensicPath || '',
-  });
+  };
+  if (options.useRealCloneManager) adapterOptions.cloneRoot = options.cloneRoot;
+  else adapterOptions.cloneManager = cloneManager;
+  const adapter = new LegacyRobloxIsolationAdapter(adapterOptions);
   return { adapter, processes, registry, monitor };
 }
 
@@ -173,6 +175,92 @@ async function launch(adapter, operationId, accountId) {
     profileName: accountId,
   }, { environmentId: allocated.environmentId, operation: { operationId, accountId } });
 }
+
+test('startup rejects PID reuse and a different process at the same clone path', async () => {
+  for (const replacement of [
+    { pid: 4242, processIdentity: 'replacement', executablePath: 'C:\\Roblox\\RobloxPlayerBeta.exe' },
+    { pid: 4242, processIdentity: 'replacement', executablePath: 'C:\\Sunday\\instance-1\\RobloxPlayerBeta.exe' },
+    { pid: 4243, processIdentity: 'replacement', executablePath: 'C:\\Sunday\\instance-1\\RobloxPlayerBeta.exe' },
+  ]) {
+    const { adapter, processes, registry } = fixture();
+    try {
+      processes.push(replacement);
+      const environment = {
+        spawnPid: 4242,
+        spawnFingerprint: {
+          processIdentity: 'original', executablePath: 'C:\\Sunday\\instance-1\\RobloxPlayerBeta.exe', fileIdentity: 'original-file',
+        },
+      };
+      await assert.rejects(adapter._waitForStable(environment, new Set()), /identity changed|timeout/);
+      assert.equal(registry.records.size, 0);
+      assert.equal(processes.length, 1);
+    } finally { adapter.shutdown(); }
+  }
+});
+
+test('startup binds ownership to the fingerprint accepted before PID reuse', async () => {
+  const { adapter, processes, registry } = fixture();
+  const issue = registry.issue.bind(registry);
+  registry.issue = (pid, metadata) => {
+    processes.find(row => row.pid === pid).processIdentity = 'replacement-after-stability';
+    return issue(pid, metadata);
+  };
+  try {
+    const result = await launch(adapter, 'operation-race', 'account-race');
+    assert.equal(result.ok, false);
+    assert.equal(registry.records.size, 0);
+    assert.equal(processes.length, 1, 'replacement must not be terminated');
+    assert.equal(processes[0].processIdentity, 'replacement-after-stability');
+  } finally { adapter.shutdown(); }
+});
+
+test('missing executable has an error listener before PID validation and grants no ownership', async () => {
+  const { adapter, registry } = fixture();
+  const child = new EventEmitter();
+  adapter.spawnProcess = () => {
+    process.nextTick(() => child.emit('error', Object.assign(new Error('synthetic missing image'), { code: 'ENOENT' })));
+    return child;
+  };
+  try {
+    const result = await launch(adapter, 'operation-missing', 'account-missing');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'FAILED');
+    assert.equal(registry.records.size, 0);
+    assert.equal(child.listenerCount('error'), 0, 'the one-shot listener handled the asynchronous error');
+  } finally { adapter.shutdown(); }
+});
+
+test('ownership issuance rejects replacement file identity before creating a capability', () => {
+  const { adapter, processes, registry } = fixture();
+  try {
+    processes.push({ pid: 4242, processIdentity: 'original', executablePath: 'C:\\Sunday\\RobloxPlayerBeta.exe' });
+    assert.throws(() => registry.issue(4242, {
+      executablePath: processes[0].executablePath,
+      expectedFingerprint: { processIdentity: 'original', executablePath: processes[0].executablePath, fileIdentity: 'different-file' },
+    }), /identity changed/);
+    assert.equal(registry.records.size, 0);
+  } finally { adapter.shutdown(); }
+});
+
+test('cancelling after process creation rolls back the exact spawn before returning', async () => {
+  const { adapter, processes, registry } = fixture();
+  const controller = new AbortController();
+  const spawn = adapter.spawnProcess;
+  adapter.spawnProcess = executablePath => {
+    const child = spawn(executablePath);
+    controller.abort(new Error('Synthetic application shutdown.'));
+    return child;
+  };
+  try {
+    const allocated = await adapter.allocateInstance({ operationId: 'operation-shutdown', accountId: 'account-shutdown' });
+    const result = await adapter.launch({ mode: 'client' }, { environmentId: allocated.environmentId, signal: controller.signal });
+    assert.equal(result.ok, false);
+    assert.equal(processes.length, 0);
+    assert.equal(registry.records.size, 0);
+    assert.equal(result.status, 'FAILED');
+  } finally { adapter.shutdown(); }
+});
 
 test('legacy adapter owns exact clients and close/restart leaves siblings alive', async () => {
   const { adapter, processes, registry } = fixture();
@@ -226,6 +314,157 @@ test('legacy forensic launch evidence never records the raw launch URI or ticket
     assert.doesNotMatch(persisted, new RegExp(secret));
     assert.doesNotMatch(persisted, /roblox-player:/i);
     assert.match(persisted, /"hasLaunchUri":true/);
+  } finally {
+    adapter.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('legacy occupied-slot forensic and diagnostic paths strictly allowlist authority metadata', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sunday-forensic-capability-'));
+  const forensicPath = path.join(root, 'occupied.jsonl');
+  const canary = 'synthetic-process-authority-canary-never-persist';
+  const loggerLines = [];
+  const stdout = [];
+  const stderr = [];
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const { adapter } = fixture({
+    forensicPath,
+    useRealCloneManager: true,
+    cloneRoot: path.join(root, 'clones'),
+    logger: {
+      info(value) { loggerLines.push(String(value)); },
+      warn(value) { loggerLines.push(String(value)); },
+      error(value) { loggerLines.push(String(value)); },
+    },
+  });
+  try {
+    process.stdout.write = chunk => { stdout.push(String(chunk)); return true; };
+    process.stderr.write = chunk => { stderr.push(String(chunk)); return true; };
+    adapter.cloneManager.markOccupied('instance-1', {
+      operationId: 'operation-safe',
+      instanceId: 'instance-1',
+      pid: 4242,
+      processIdentity: 'created-safe',
+      executablePath: 'C:\\Managed\\instance-1\\RobloxPlayerBeta.exe',
+      fileIdentity: 'file-safe',
+      capability: canary,
+      nested: { capability: canary, futureAuthority: canary },
+      unknownField: canary,
+    });
+    const authorityEvidence = {
+      operationId: 'operation-safe',
+      instanceId: 'instance-1',
+      pid: 4242,
+      processIdentity: 'created-safe',
+      executablePath: 'C:\\Managed\\instance-1\\RobloxPlayerBeta.exe',
+      capability: canary,
+      nested: { capability: canary },
+    };
+    adapter._forensic('allocation_start', {
+      trace: { operationId: 'operation-safe' },
+      ownedSlots: [['instance-1', authorityEvidence]],
+      liveRows: [Object.assign({ unknownField: canary }, authorityEvidence)],
+      environments: [Object.assign({ state: 'RUNNING', unknownField: canary }, authorityEvidence)],
+      unknownField: canary,
+    });
+    adapter._forensic('clone_acquire_start', {
+      trace: { operationId: 'operation-safe' },
+      ownedSlots: [['instance-1', authorityEvidence]],
+      liveRows: [authorityEvidence],
+      unknownField: canary,
+    });
+    adapter._forensic('clone_reclaim', {
+      slotId: 'instance-1',
+      outcome: 'LIVE_OWNER',
+      owner: authorityEvidence,
+      unknownField: canary,
+    });
+    adapter._forensic('clone_slot_decision', {
+      trace: { operationId: 'operation-safe' },
+      slotId: 'instance-1',
+      decision: 'SKIP_OCCUPIED',
+      slotState: { state: 'OCCUPIED', owner: authorityEvidence, unknownField: canary },
+      unknownField: canary,
+    });
+    adapter._forensic('launch_failed', {
+      trace: { operationId: 'operation-safe' },
+      message: canary,
+      cleanup: { ok: false, confirmed: false, unknownField: canary },
+      unknownField: canary,
+    });
+    adapter._forensic('unrecognized-test-event', {
+      capability: canary,
+      nested: { capability: canary },
+      unknownField: canary,
+    });
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  }
+
+  try {
+    const persisted = fs.readFileSync(forensicPath, 'utf8');
+    const diagnostics = JSON.stringify(adapter.diagnostics());
+    const captured = [persisted, diagnostics, ...loggerLines, ...stdout, ...stderr];
+    assert.equal(captured.some(value => value.includes(canary)), false,
+      'Synthetic authority material crossed a logging or diagnostic boundary.');
+
+    const records = persisted.trim().split(/\r?\n/).map(line => JSON.parse(line));
+    const occupied = records.find(record => record.event === 'clone_slot_state'
+      && record.payload && record.payload.state === 'OCCUPIED');
+    assert.ok(occupied);
+    assert.deepEqual(occupied.payload.owner, {
+      operationId: 'operation-safe',
+      instanceId: 'instance-1',
+      pid: 4242,
+      processIdentity: 'created-safe',
+      executablePath: 'C:\\Managed\\instance-1\\RobloxPlayerBeta.exe',
+      fileIdentity: 'file-safe',
+      capabilityPresent: true,
+    });
+    assert.equal(occupied.payload.owner.capability, undefined);
+    assert.equal(occupied.payload.owner.nested, undefined);
+    assert.equal(occupied.payload.unknownField, undefined);
+
+    const unknown = records.find(record => record.event === 'unrecognized_event');
+    assert.deepEqual(unknown.payload, { recorded: false });
+    const diagnosticOwner = adapter.diagnostics().slotStates[0].owner;
+    assert.equal(diagnosticOwner.capability, undefined);
+    assert.equal(diagnosticOwner.capabilityPresent, true);
+    assert.equal(diagnosticOwner.operationId, 'operation-safe');
+  } finally {
+    adapter.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('legacy forensic write errors emit a fixed message without dumping the rejected object', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sunday-forensic-error-'));
+  const forensicPath = path.join(root, 'not-a-file');
+  const canary = 'synthetic-logging-error-canary-never-emit';
+  const loggerLines = [];
+  fs.mkdirSync(forensicPath);
+  const { adapter } = fixture({
+    forensicPath,
+    logger: {
+      info(value) { loggerLines.push(String(value)); },
+      warn(value) { loggerLines.push(String(value)); },
+      error(value) { loggerLines.push(String(value)); },
+    },
+  });
+  try {
+    adapter._forensic('clone_slot_state', {
+      instanceId: 'instance-1',
+      state: 'OCCUPIED',
+      owner: { capability: canary },
+      unknownField: canary,
+    });
+    assert.equal(loggerLines.length > 0, true);
+    assert.equal(loggerLines.some(value => value.includes(canary)), false,
+      'Synthetic authority material entered the forensic error logger.');
+    assert.match(loggerLines.at(-1), /^Phase 7 forensic capture failed \([A-Z0-9_]+\)\.$/);
   } finally {
     adapter.shutdown();
     fs.rmSync(root, { recursive: true, force: true });
@@ -347,6 +586,58 @@ test('legacy clone launch path is canonical when its logical root is virtualized
     assert.equal(built.launchExecutablePath, fs.realpathSync.native(built.executablePath));
     assert.equal(fs.statSync(path.join(path.dirname(built.launchExecutablePath), 'content')).isDirectory(), true);
   } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test('the production spawn path starts a harmless cloned probe under a spaced Windows profile with intact arguments', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'sunday-spaced-launch-'));
+  const profile = path.join(temporary, 'Users', "First Last [test] & O'Name \u010Cern\u00FD");
+  const version = path.join(profile, 'Roblox', 'Versions', 'version with spaces');
+  const cloneRoot = path.join(profile, 'SUNDAY Launcher', 'legacy-instances');
+  const reportFile = path.join(profile, 'probe result.json');
+  let child;
+  let adapter;
+  try {
+    fs.mkdirSync(path.join(version, 'content', 'shared assets'), { recursive: true });
+    fs.writeFileSync(path.join(version, 'RobloxPlayerBeta.exe'), 'synthetic non-executable player');
+    fs.writeFileSync(path.join(version, 'content', 'fixture.txt'), 'synthetic content');
+    fs.writeFileSync(path.join(version, 'content', 'shared assets', 'fixture.txt'), 'shared content');
+    const probeName = 'SundayPathProbe.exe';
+    try { fs.linkSync(process.execPath, path.join(version, probeName)); }
+    catch (_) { fs.copyFileSync(process.execPath, path.join(version, probeName)); }
+    const manager = new LegacyCloneManager({ root: cloneRoot });
+    const built = manager.acquire(version, []);
+    assert.equal(built.validation.ok, true);
+    assert.equal(fs.readFileSync(path.join(built.directory, 'content', 'shared assets', 'fixture.txt'), 'utf8'), 'shared content');
+    const nativeApi = { listProcesses: () => [] };
+    adapter = new LegacyRobloxIsolationAdapter({
+      ownerId: 'synthetic-path-probe-owner', cloneManager: manager,
+      nativeApi, legacyNativeApi: {}, processCapabilities: new ProcessCapabilityRegistry(nativeApi),
+    });
+    const executable = fs.realpathSync.native(path.join(built.directory, probeName));
+    const args = ['argument with spaces', 'literal & value', 'embedded "quote"', 'trailing backslash\\'];
+    const script = 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ executable: process.execPath, args: process.argv.slice(2) }));';
+    child = adapter.spawnProcess(executable, ['-e', script, reportFile, ...args]);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Harmless path probe did not exit.')), 10000);
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', code => {
+        clearTimeout(timer);
+        if (code === 0) resolve(); else reject(new Error(`Harmless path probe exited with code ${code}.`));
+      });
+    });
+    const result = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+    assert.equal(result.executable.toLowerCase(), executable.toLowerCase());
+    assert.deepEqual(result.args, args);
+  } finally {
+    if (child && child.exitCode == null) {
+      await new Promise(resolve => { child.once('exit', resolve); child.kill(); });
+    }
+    if (adapter) adapter.shutdown();
+    assert.ok(path.resolve(temporary).startsWith(path.resolve(os.tmpdir()) + path.sep));
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 });

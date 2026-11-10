@@ -419,7 +419,7 @@ function setServerAutoRefresh(enabled) {
 async function joinServer(placeId, serverId, name) {
   if (!state.accounts.length) { toast('Add an account to join a server', 'bad'); closeModal(); state.servers = null; setView('accounts'); return; }
   const ids = state.selected.size ? Array.from(state.selected) : [state.accounts[0].id];
-  const r = await call(() => api.launch.join(ids, String(placeId), String(serverId)));
+  const r = await callLaunch(() => api.launch.join(ids, String(placeId), String(serverId)));
   if (handlePreparedPlan(r)) { closeModal(); state.servers = null; return; }
   if (r && r.ok) {
     toast(`Joining ${name} - ${r.launched} client${r.launched === 1 ? '' : 's'}`, r.failed ? 'bad' : 'good');
@@ -509,11 +509,11 @@ async function joinPlace(placeId, name) {
   if (!state.accounts.length) { toast('Add an account to join games', 'bad'); setView('accounts'); return; }
   const ids = state.selected.size ? Array.from(state.selected) : [state.accounts[0].id];
   toast('Preparing ' + (name || 'game') + (ids.length > 1 ? ' for ' + ids.length + ' accounts' : '') + '…');
-  const r = await call(() => api.launch.accounts(ids, String(placeId)));
+  const r = await callLaunch(() => api.launch.accounts(ids, String(placeId)));
   if (handlePreparedPlan(r)) return;
   if (r && r.ok) {
     clearLaunchFailure();
     toast(`Launched ${r.launched} client${r.launched === 1 ? '' : 's'}`, r.failed ? 'bad' : 'good');
     recordRecentGame(gameByPlaceId(placeId));
-  } else presentLaunchFailure(r, () => call(() => api.launch.accounts(ids, String(placeId))));
+  } else presentLaunchFailure(r, () => callLaunch(() => api.launch.accounts(ids, String(placeId))));
 }

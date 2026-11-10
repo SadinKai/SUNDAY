@@ -169,6 +169,300 @@ function sanitizedLegacyFailure(message, stage) {
   return { code: 'LAUNCH_FAILED', stage, reason: 'Roblox could not be launched in Multi-instance mode.' };
 }
 
+const FORENSIC_EVENTS = new Set([
+  'adapter_started',
+  'allocation_start',
+  'allocation_complete',
+  'clone_acquire_start',
+  'clone_build_start',
+  'clone_build_complete',
+  'clone_reclaim',
+  'clone_slot_decision',
+  'clone_slot_state',
+  'launch_startup_error_dialog',
+  'launch_stability_sample',
+  'launch_spawn_request',
+  'launch_spawned',
+  'launch_marked_running',
+  'launch_failed',
+]);
+
+function forensicString(value, limit = 4096) {
+  return String(value == null ? '' : value).slice(0, limit);
+}
+
+function forensicInteger(value) {
+  const number = Number(value);
+  return Number.isInteger(number) ? number : null;
+}
+
+function forensicTrace(value) {
+  const trace = value && typeof value === 'object' ? value : {};
+  return {
+    allocationId: forensicString(trace.allocationId, 160),
+    operationId: forensicString(trace.operationId, 160),
+    instanceId: forensicString(trace.instanceId, 80),
+    allocationCount: forensicInteger(trace.allocationCount),
+    buildCount: forensicInteger(trace.buildCount),
+    validationCount: forensicInteger(trace.validationCount),
+    launchCount: forensicInteger(trace.launchCount),
+  };
+}
+
+function forensicStat(value) {
+  const stat = value && typeof value === 'object' ? value : {};
+  return {
+    file: stat.file === true,
+    directory: stat.directory === true,
+    symbolicLink: stat.symbolicLink === true,
+    size: forensicInteger(stat.size),
+    device: forensicString(stat.device, 80),
+    inode: forensicString(stat.inode, 80),
+    links: forensicInteger(stat.links),
+  };
+}
+
+function forensicPathEvidence(value) {
+  if (typeof value === 'string') return { path: forensicString(value), exists: true };
+  const evidence = value && typeof value === 'object' ? value : {};
+  return {
+    path: forensicString(evidence.path),
+    pathLength: forensicInteger(evidence.pathLength),
+    exists: evidence.exists === true,
+    lstat: evidence.lstat ? forensicStat(evidence.lstat) : null,
+    stat: evidence.stat ? forensicStat(evidence.stat) : null,
+    realpath: forensicString(evidence.realpath),
+    readable: evidence.readable === true,
+    writableAccessCheck: evidence.writableAccessCheck === true,
+    errorCode: forensicString(
+      evidence.lstatError && evidence.lstatError.code
+        || evidence.statError && evidence.statError.code
+        || evidence.realpathError && evidence.realpathError.code
+        || evidence.readError && evidence.readError.code
+        || evidence.writeError && evidence.writeError.code,
+      80,
+    ),
+  };
+}
+
+function forensicProcessEvidence(value) {
+  const row = value && typeof value === 'object' ? value : {};
+  return {
+    pid: forensicInteger(row.pid),
+    parentPid: forensicInteger(row.parentPid),
+    processIdentity: forensicString(row.processIdentity, 160),
+    executablePath: forensicString(row.executablePath),
+    fileIdentity: forensicString(row.fileIdentity, 256),
+    memBytes: forensicInteger(row.memBytes),
+  };
+}
+
+function forensicWindowEvidence(value) {
+  const window = value && typeof value === 'object' ? value : {};
+  const rect = window.rect && typeof window.rect === 'object' ? window.rect : {};
+  return {
+    className: forensicString(window.className, 120),
+    responding: window.responding !== false,
+    rect: {
+      left: forensicInteger(rect.left),
+      top: forensicInteger(rect.top),
+      right: forensicInteger(rect.right),
+      bottom: forensicInteger(rect.bottom),
+      width: forensicInteger(rect.width),
+      height: forensicInteger(rect.height),
+    },
+  };
+}
+
+function capabilityFreeOwnerEvidence(value) {
+  const owner = value && typeof value === 'object' ? value : {};
+  return Object.freeze({
+    operationId: forensicString(owner.operationId, 160),
+    instanceId: forensicString(owner.instanceId, 80),
+    pid: forensicInteger(owner.pid),
+    processIdentity: forensicString(owner.processIdentity, 160),
+    executablePath: forensicString(owner.executablePath),
+    fileIdentity: forensicString(owner.fileIdentity, 256),
+    capabilityPresent: owner.capabilityPresent === true
+      || (typeof owner.capability === 'string' && owner.capability.length > 0),
+  });
+}
+
+function forensicSlotState(value) {
+  const state = value && typeof value === 'object' ? value : {};
+  return {
+    instanceId: forensicString(state.instanceId || state.slotId, 80),
+    state: forensicString(state.state, 80),
+    ownership: forensicString(state.ownership, 80),
+    reclamation: forensicString(state.reclamation, 80),
+    reservation: forensicString(state.reservation, 80),
+    reason: forensicString(state.reason, 500),
+    errorCode: forensicString(state.errorCode, 80),
+    owner: state.owner ? capabilityFreeOwnerEvidence(state.owner) : null,
+    capabilityPresent: typeof state.capability === 'string' && state.capability.length > 0,
+  };
+}
+
+function forensicOwnedSlots(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(entry => ({
+    slotId: forensicString(Array.isArray(entry) ? entry[0] : '', 80),
+    owner: capabilityFreeOwnerEvidence(Array.isArray(entry) ? entry[1] : null),
+  }));
+}
+
+function forensicPayload(event, value) {
+  const payload = value && typeof value === 'object' ? value : {};
+  switch (event) {
+    case 'adapter_started':
+      return {
+        runtimePid: forensicInteger(payload.pid),
+        cwd: forensicString(payload.cwd),
+        cloneRoot: forensicPathEvidence(payload.cloneRoot),
+        source: forensicString(payload.source),
+      };
+    case 'allocation_start':
+      return {
+        trace: forensicTrace(payload.trace),
+        cwd: forensicString(payload.cwd),
+        playerPath: forensicPathEvidence(payload.playerPath),
+        liveRows: Array.isArray(payload.liveRows) ? payload.liveRows.map(forensicProcessEvidence) : [],
+        ownedSlots: forensicOwnedSlots(payload.ownedSlots),
+        environments: Array.isArray(payload.environments) ? payload.environments.map(environment => ({
+          environmentId: forensicString(environment && environment.environmentId, 160),
+          slotId: forensicString(environment && environment.slotId, 80),
+          state: forensicString(environment && environment.state, 80),
+          pid: forensicInteger(environment && environment.pid),
+        })) : [],
+      };
+    case 'allocation_complete': {
+      const slot = payload.slot && typeof payload.slot === 'object' ? payload.slot : {};
+      return {
+        trace: forensicTrace(payload.trace),
+        environmentId: forensicString(payload.environmentId, 160),
+        slot: {
+          slotId: forensicString(slot.slotId, 80),
+          executablePath: forensicString(slot.executablePath),
+          launchExecutablePath: forensicString(slot.launchExecutablePath),
+          validationPassed: !!(slot.validation && slot.validation.ok),
+        },
+      };
+    }
+    case 'clone_acquire_start':
+      return {
+        trace: forensicTrace(payload.trace),
+        root: forensicPathEvidence(payload.root),
+        versionDirectory: forensicPathEvidence(payload.versionDirectory),
+        reserved: Array.isArray(payload.reserved) ? payload.reserved.map(item => forensicString(item, 80)) : [],
+        liveRows: Array.isArray(payload.liveRows) ? payload.liveRows.map(forensicProcessEvidence) : [],
+        ownedSlots: forensicOwnedSlots(payload.ownedSlots),
+      };
+    case 'clone_build_start':
+      return {
+        trace: forensicTrace(payload.trace),
+        slotId: forensicString(payload.slotId, 80),
+        slotDirectory: forensicPathEvidence(payload.slotDirectory),
+        sourceDirectory: forensicPathEvidence(payload.sourceDirectory),
+      };
+    case 'clone_build_complete':
+      return {
+        trace: forensicTrace(payload.trace),
+        slotId: forensicString(payload.slotId, 80),
+        linked: forensicInteger(payload.linked),
+        copied: forensicInteger(payload.copied),
+        junctioned: forensicInteger(payload.junctioned),
+        directoryShells: forensicInteger(payload.directoryShells),
+        slotDirectory: forensicPathEvidence(payload.slotDirectory),
+        content: forensicPathEvidence(payload.content),
+        contentEntryCount: Array.isArray(payload.contentTree) ? payload.contentTree.length : 0,
+        treeEntryCount: Array.isArray(payload.tree) ? payload.tree.length : 0,
+      };
+    case 'clone_reclaim':
+      return {
+        slotId: forensicString(payload.slotId, 80),
+        directory: forensicString(payload.directory),
+        outcome: forensicString(payload.outcome, 120),
+        owner: payload.owner ? capabilityFreeOwnerEvidence(payload.owner) : null,
+        liveRows: Array.isArray(payload.liveRows) ? payload.liveRows.map(forensicProcessEvidence) : [],
+        executable: payload.executable ? forensicPathEvidence(payload.executable) : null,
+        errorCode: forensicString(payload.error && payload.error.code, 80),
+        remainingEntryCount: Array.isArray(payload.remainingTree) ? payload.remainingTree.length : 0,
+      };
+    case 'clone_slot_decision':
+      return {
+        trace: forensicTrace(payload.trace),
+        slotId: forensicString(payload.slotId, 80),
+        decision: forensicString(payload.decision, 120),
+        slotState: forensicSlotState(payload.slotState),
+      };
+    case 'clone_slot_state':
+      return forensicSlotState(payload);
+    case 'launch_startup_error_dialog':
+      return {
+        trace: forensicTrace(payload.trace),
+        candidate: forensicProcessEvidence(payload.candidate),
+        window: forensicWindowEvidence(payload.window),
+      };
+    case 'launch_stability_sample':
+      return {
+        trace: forensicTrace(payload.trace),
+        candidate: forensicProcessEvidence(payload.candidate),
+        consecutive: forensicInteger(payload.consecutive),
+        windowReady: payload.windowReady === true,
+        window: payload.window ? forensicWindowEvidence(payload.window) : null,
+      };
+    case 'launch_spawn_request': {
+      const args = payload.launchArguments && typeof payload.launchArguments === 'object' ? payload.launchArguments : {};
+      return {
+        trace: forensicTrace(payload.trace),
+        cwd: forensicString(payload.cwd),
+        launchArguments: {
+          count: forensicInteger(args.count),
+          mode: forensicString(args.mode, 40),
+          hasLaunchUri: args.hasLaunchUri === true,
+        },
+        logicalExecutable: forensicPathEvidence(payload.logicalExecutable),
+        canonicalExecutable: forensicString(payload.canonicalExecutable),
+        cloneDirectory: forensicPathEvidence(payload.cloneDirectory),
+        cloneContent: forensicPathEvidence(payload.cloneContent),
+        sourceDirectory: forensicPathEvidence(payload.sourceDirectory),
+        sourceContent: forensicPathEvidence(payload.sourceContent),
+      };
+    }
+    case 'launch_spawned':
+      return {
+        trace: forensicTrace(payload.trace),
+        spawnPid: forensicInteger(payload.spawnPid),
+        fingerprint: forensicProcessEvidence(payload.fingerprint),
+      };
+    case 'launch_marked_running':
+      return {
+        trace: forensicTrace(payload.trace),
+        spawnPid: forensicInteger(payload.spawnPid),
+        pid: forensicInteger(payload.pid),
+        processIdentity: forensicString(payload.processIdentity, 160),
+        executablePath: forensicString(payload.executablePath),
+        acceptedWindow: payload.acceptedWindow ? forensicWindowEvidence(payload.acceptedWindow) : null,
+      };
+    case 'launch_failed': {
+      const failure = sanitizedLegacyFailure(payload.message, 'launch');
+      return {
+        trace: forensicTrace(payload.trace),
+        spawnPid: forensicInteger(payload.spawnPid),
+        failureCode: failure.code,
+        failureStage: failure.stage,
+        cleanup: payload.cleanup ? {
+          ok: payload.cleanup.ok === true,
+          confirmed: payload.cleanup.confirmed === true,
+        } : null,
+        cleanupConfirmed: payload.cleanupConfirmed === true,
+      };
+    }
+    default:
+      return { recorded: false };
+  }
+}
+
 class LegacyCloneManager {
   constructor(options) {
     const opts = options || {};
@@ -266,7 +560,7 @@ class LegacyCloneManager {
       ownership: 'OWNED',
       reclamation: 'BLOCKED_BY_OWNER',
       reason: 'A current SUNDAY Launcher capability proves a live Roblox process owns this slot.',
-      owner: evidence || null,
+      owner: capabilityFreeOwnerEvidence(evidence),
       reservation: 'ACTIVE',
     });
   }
@@ -786,15 +1080,17 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
   _forensic(event, payload) {
     if (!this.forensicPath) return;
     try {
+      const safeEvent = FORENSIC_EVENTS.has(String(event)) ? String(event) : 'unrecognized_event';
       fs.mkdirSync(path.dirname(this.forensicPath), { recursive: true });
       fs.appendFileSync(this.forensicPath, JSON.stringify({
         at: new Date().toISOString(),
-        event,
+        event: safeEvent,
         pid: process.pid,
-        payload: payload || {},
+        payload: forensicPayload(safeEvent, payload),
       }) + '\n', 'utf8');
     } catch (error) {
-      this.logger.warn('Phase 7 forensic capture failed: ' + error.message);
+      const code = /^[A-Z0-9_]{1,40}$/.test(String(error && error.code || '')) ? error.code : 'EFORENSIC';
+      try { this.logger.warn(`Phase 7 forensic capture failed (${code}).`); } catch (_) {}
     }
   }
 
@@ -932,6 +1228,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         }
         const capability = this.processCapabilities.issue(Number(record.pid), {
           executablePath: row.executablePath,
+          expectedFingerprint: record,
           ownerId: this.ownerId,
           instanceId: record.instanceId,
           accountId: record.accountId,
@@ -1095,7 +1392,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         maxConcurrent: MAX_LEGACY_MANAGED_CLIENTS,
         maxPhysicalSlots: MAX_LEGACY_PHYSICAL_SLOTS,
         activeOrInFlight: Array.from(this.environments.values())
-          .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING'].includes(environment.state)).length,
+          .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING', 'UNKNOWN'].includes(environment.state)).length,
         reusableSlotCount: 0,
         releasedButBusySlotCount: 0,
         allocatorDecision: null,
@@ -1104,7 +1401,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     const activeManagedClientCount = Array.from(this.environments.values())
       .filter(environment => environment.state === 'RUNNING').length;
     const inFlightLaunchCount = Array.from(this.environments.values())
-      .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING'].includes(environment.state)).length;
+      .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING', 'UNKNOWN'].includes(environment.state)).length;
     return Object.assign({}, allocator, {
       activeManagedClientCount,
       inFlightLaunchCount,
@@ -1133,7 +1430,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
       });
     }
     const activeAccounts = new Set(Array.from(this.environments.values())
-      .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING'].includes(environment.state))
+      .filter(environment => ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING', 'UNKNOWN'].includes(environment.state))
       .map(environment => environment.accountId)
       .filter(accountId => accountId && !String(accountId).startsWith('signed-out-')));
     const duplicate = requested.find(operation => activeAccounts.has(String(operation.accountId || '')));
@@ -1185,7 +1482,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     const accountId = String(operation && operation.accountId || '');
     if (accountId && !accountId.startsWith('signed-out-')) {
       const duplicate = Array.from(this.environments.values()).some(environment =>
-        ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING'].includes(environment.state)
+        ['ALLOCATED', 'STARTING', 'LAUNCHING', 'RUNNING', 'UNKNOWN'].includes(environment.state)
         && environment.accountId === accountId);
       if (duplicate) {
         return result(ISOLATION_STATES.LEGACY_COMPAT, 'That account already has an active or in-flight SUNDAY-managed client.', {
@@ -1269,13 +1566,23 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     const deadline = Date.now() + this.launchTimeoutMs;
     let candidate = null;
     let consecutive = 0;
+    const expected = environment.spawnFingerprint;
+    if (!expected || !expected.processIdentity || !expected.executablePath || !expected.fileIdentity) {
+      throw new Error('The spawned Roblox process identity could not be proven.');
+    }
     while (Date.now() < deadline) {
       if (signal && signal.aborted) throw signal.reason || new Error('Launch cancelled.');
-      const matches = this._rows().filter(row => row.processIdentity
-        && !initialIdentities.has(this._identity(row))
-        && (Number(row.pid) === Number(environment.spawnPid)
-          || normalize(row.executablePath) === normalize(environment.launchExecutablePath)
-          || normalize(row.executablePath) === normalize(environment.executablePath)));
+      if (environment.spawnError) throw new Error(environment.spawnError);
+      const rows = this._rows();
+      const spawned = rows.find(row => Number(row.pid) === Number(environment.spawnPid));
+      if (spawned && (String(spawned.processIdentity || '') !== String(expected.processIdentity)
+          || normalize(spawned.executablePath) !== normalize(expected.executablePath))) {
+        throw new Error('The spawned Roblox process identity changed during startup.');
+      }
+      const matches = rows.filter(row => Number(row.pid) === Number(environment.spawnPid)
+        && String(row.processIdentity || '') === String(expected.processIdentity)
+        && normalize(row.executablePath) === normalize(expected.executablePath)
+        && !initialIdentities.has(this._identity(row)));
       const row = matches.find(item => candidate && this._identity(item) === candidate)
         || matches.find(item => Number(item.pid) === Number(environment.spawnPid))
         || matches[0];
@@ -1357,6 +1664,12 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     });
     const initialIdentities = new Set(this._rows().map(row => this._identity(row)));
     const child = this.spawnProcess(environment.launchExecutablePath, args);
+    // A failed spawn returns a child without a PID, then emits error later.
+    // Register before validation so that failure never becomes an uncaught event.
+    if (child && typeof child.once === 'function') child.once('error', error => {
+      const code = String(error && error.code || 'UNKNOWN');
+      environment.spawnError = `Roblox process creation failed (${/^[A-Z0-9_]{1,40}$/.test(code) ? code : 'UNKNOWN'}).`;
+    });
     if (!child || !Number.isInteger(Number(child.pid)) || Number(child.pid) <= 0) throw new Error('Roblox process creation did not return a PID.');
     environment.spawnPid = Number(child.pid);
     environment.state = 'LAUNCHING';
@@ -1378,9 +1691,6 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
       spawnPid: environment.spawnPid,
       fingerprint: spawnFingerprint,
     });
-    if (typeof child.once === 'function') child.once('error', error => {
-      environment.spawnError = (error && error.message) || String(error);
-    });
     if (typeof child.unref === 'function') child.unref();
     await this._guardTick(false);
     const row = await this._waitForStable(environment, initialIdentities, context && context.signal);
@@ -1391,6 +1701,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
     environment.executablePath = String(row.executablePath || environment.launchExecutablePath);
     const capability = this.processCapabilities.issue(row.pid, {
       executablePath: environment.executablePath,
+      expectedFingerprint: environment.spawnFingerprint,
       ownerId: this.ownerId,
       instanceId: environment.instanceId,
       accountId: environment.accountId,
@@ -1505,6 +1816,31 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         }
       } else {
         environment.state = environment.capability || environment.spawnPid ? 'UNKNOWN' : 'FAILED';
+        if (environment.capability) {
+          this.capabilityToEnvironment.set(environment.capability, environment.environmentId);
+          if (typeof this.cloneManager.markOccupied === 'function') {
+            this.cloneManager.markOccupied(environment.slotId, {
+              operationId: environment.operationId,
+              instanceId: environment.instanceId,
+              pid: environment.pid,
+              processIdentity: environment.processIdentity,
+              executablePath: environment.executablePath,
+              capability: environment.capability,
+            });
+          }
+          if (this.monitor) this.monitor.markManaged(environment.pid, {
+            profileName: String(rawIntent && rawIntent.profileName || environment.accountId || environment.instanceId),
+            mode: rawIntent && rawIntent.mode === 'client' ? 'client' : 'deeplink',
+            playerPath: environment.sourcePlayerPath,
+            exePath: environment.executablePath,
+            accountId: environment.accountId,
+            capability: environment.capability,
+            instanceId: environment.instanceId,
+            operationId: environment.operationId,
+            processIdentity: environment.processIdentity,
+            recoveryRequired: true,
+          });
+        }
       }
       this._forensic('launch_failed', {
         trace: environment.trace,
@@ -1514,7 +1850,14 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         cleanupConfirmed,
       });
       return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, {
-        ok: false, status: environment.state, failureCode: this.lastFailure.code, failureStage: this.lastFailure.stage,
+        ok: false,
+        status: environment.state,
+        failureCode: this.lastFailure.code,
+        failureStage: this.lastFailure.stage,
+        capability: cleanupConfirmed ? null : environment.capability,
+        pid: cleanupConfirmed ? null : environment.pid,
+        environmentId: environment.environmentId,
+        instanceId: environment.instanceId,
       });
     }
   }
@@ -1625,17 +1968,28 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
         ok: false, previousStopped: true, status: 'UNKNOWN',
       });
     }
-    const replacement = this._environment(allocated.environmentId);
-    try {
-      const launched = await this._launchInEnvironment(rawIntent, replacement, Object.assign({}, context, {
-        environmentId: replacement.environmentId,
-      }));
-      return Object.assign({}, launched, { environmentId: replacement.environmentId });
+    const launched = await this.launch(rawIntent, Object.assign({}, context, {
+      environmentId: allocated.environmentId,
+    }));
+    if (!launched.ok && launched.status === 'FAILED' && !launched.capability) {
+      let released;
+      try { released = await this.release(allocated.environmentId); }
+      catch (error) {
+        released = { ok: false, released: false, reason: error && error.message || 'unknown release error' };
+      }
+      if (!(released && released.ok && released.released)) {
+        return Object.assign({}, launched, {
+          status: 'UNKNOWN',
+          reason: `${launched.reason} Replacement environment release was not confirmed: ${released && released.reason || 'unknown release result'}`,
+          environmentId: allocated.environmentId,
+          previousStopped: true,
+        });
+      }
     }
-    catch (error) {
-      replacement.state = 'FAILED';
-      return result(ISOLATION_STATES.LEGACY_COMPAT, error.message, { ok: false, status: 'FAILED', previousStopped: true });
-    }
+    return Object.assign({}, launched, {
+      environmentId: allocated.environmentId,
+      previousStopped: true,
+    });
   }
 
   async release(environmentId) {
@@ -1709,7 +2063,7 @@ class LegacyRobloxIsolationAdapter extends RobloxIsolationAdapter {
       externalAtStartup: Array.from(this.externalAtStartup.values()),
       crossProcessActions: this.crossProcessActions.slice(),
       slotStates: typeof this.cloneManager.slotStateSnapshot === 'function'
-        ? this.cloneManager.slotStateSnapshot()
+        ? this.cloneManager.slotStateSnapshot().map(forensicSlotState)
         : [],
       capacity,
       restoredOwnedClientCount: this.restored.length,

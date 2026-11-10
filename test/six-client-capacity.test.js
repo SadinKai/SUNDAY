@@ -113,6 +113,10 @@ test('renderer clears completed A+B through refreshes and the next plan contains
       callTimeouts.push(timeoutMs);
       return operation();
     },
+    callLaunch: async operation => {
+      callTimeouts.push(0);
+      return operation();
+    },
     capabilityAvailable: () => true,
     clearLaunchFailure() {},
     content: { addEventListener() {} },
@@ -172,6 +176,101 @@ test('renderer clears completed A+B through refreshes and the next plan contains
   await dispatch('launch-accounts');
   assert.deepEqual(launches, [['A', 'B'], ['C']]);
   assert.equal(callTimeouts.at(-1), 0);
+});
+
+test('partial launch clears successes and repeated retries include only remaining failures', async () => {
+  const launches = [];
+  const state = { selected: new Set(['A', 'B', 'C']), settings: {}, instances: [], view: 'instances', placeId: '' };
+  let dispatch;
+  const context = vm.createContext({
+    state,
+    content: { addEventListener() {} },
+    document: { addEventListener(type, handler) { if (type === 'click') dispatch = handler; } },
+    $: () => null,
+    parseRobloxTarget: () => ({ invalid: false, placeId: '', gameId: '' }),
+    callLaunch: operation => operation(),
+    handlePreparedPlan: () => false,
+    selectionAfterLaunch: model.selectionAfterLaunch,
+    applyLaunchSelectionResult(response) { state.selected = new Set(model.selectionAfterLaunch(state.selected, response)); },
+    presentLaunchFailure(_response, retry) { context.retryLastLaunch = retry; },
+    clearLaunchFailure() { context.retryLastLaunch = null; },
+    toast() {}, loadInstances: async () => {}, views: { instances() {} },
+    api: { launch: { async accounts(ids) {
+      launches.push(Array.from(ids));
+      return { ok: ids.length === 1, launched: 1, failed: ids.length - 1,
+        results: ids.map((accountId, index) => ({ accountId, ok: index === 0, state: index === 0 ? 'RUNNING' : 'FAILED' })) };
+    } } },
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'actions.js'), 'utf8'), context);
+  const click = action => dispatch({ target: { closest: () => ({ dataset: { action }, disabled: false }) } });
+  await click('launch-accounts');
+  assert.deepEqual(Array.from(state.selected), ['B', 'C']);
+  await click('retry-last-launch');
+  assert.deepEqual(Array.from(state.selected), ['C']);
+  await click('retry-last-launch');
+  assert.deepEqual(Array.from(state.selected), []);
+  assert.deepEqual(launches, [['A', 'B', 'C'], ['B', 'C'], ['C']]);
+});
+
+test('renderer launch mutations remain completion-correlated instead of presenting false timeouts', () => {
+  const root = path.join(__dirname, '..', 'src', 'renderer');
+  const actions = fs.readFileSync(path.join(root, 'actions.js'), 'utf8');
+  const games = fs.readFileSync(path.join(root, 'views', 'games.js'), 'utf8');
+  const router = fs.readFileSync(path.join(root, 'router.js'), 'utf8');
+
+  assert.match(router, /async function callLaunch\(fn\)/);
+  assert.match(router, /launchMutationPending/);
+  assert.match(router, /LAUNCH_RESULT_UNKNOWN/);
+  for (const source of [actions, games]) {
+    assert.doesNotMatch(source, /call\(\(\) => api\.launch\.(?:quick|accounts|join|joinPersonMulti|autoFill)\(/);
+  }
+  assert.doesNotMatch(actions, /call\(\(\) => api\.accounts\.follow\(/);
+  assert.doesNotMatch(actions, /call\(\(\) => api\.instances\.restart\(/);
+  assert.equal((actions.match(/callLaunch\(\(\) => api\.instances\.restart\(/g) || []).length, 2);
+});
+
+test('renderer serializes pending launch mutations and treats disconnects as unresolved', async () => {
+  const root = path.join(__dirname, '..', 'src', 'renderer');
+  let calls = 0;
+  let rejectFirst;
+  const firstWork = new Promise((_resolve, reject) => { rejectFirst = reject; });
+  const context = vm.createContext({
+    api: {},
+    content: {},
+    document: {
+      title: '',
+      querySelectorAll() { return []; },
+    },
+    localStorage: { setItem() {} },
+    Promise,
+    setTimeout,
+    clearTimeout,
+    state: { view: 'instances', people: { route: 'home' } },
+    requestAnimationFrame() {},
+    refreshVisiblePeoplePresence() {},
+    $() { return null; },
+  });
+  context.firstLaunch = () => { calls += 1; return firstWork; };
+  context.secondLaunch = async () => { calls += 1; return { ok: true }; };
+  vm.runInContext(fs.readFileSync(path.join(root, 'router.js'), 'utf8'), context);
+
+  const pending = vm.runInContext('callLaunch(firstLaunch)', context);
+  await Promise.resolve();
+  const duplicate = await vm.runInContext('callLaunch(secondLaunch)', context);
+  assert.equal(calls, 1);
+  assert.equal(duplicate.unresolved, true);
+  assert.equal(duplicate.actions.includes('RETRY'), false);
+
+  rejectFirst(new Error('Synthetic RPC connection lost after dispatch.'));
+  const disconnected = await pending;
+  assert.equal(disconnected.ok, false);
+  assert.equal(disconnected.unresolved, true);
+  assert.equal(disconnected.failureCode, 'LAUNCH_RESULT_UNKNOWN');
+  assert.equal(disconnected.actions.includes('RETRY'), false);
+
+  const afterDisconnect = await vm.runInContext('callLaunch(secondLaunch)', context);
+  assert.equal(afterDisconnect.unresolved, true);
+  assert.equal(calls, 1);
 });
 
 test('legacy ownership persistence preserves additive metadata but strips capability-like fields', () => {
@@ -467,6 +566,7 @@ function legacyRuntimeFixture() {
   return {
     database,
     ownershipStore,
+    native,
     processes,
     physicalSlots,
     setProcessObservationAvailable(value) { processObservationAvailable = !!value; },
@@ -576,6 +676,175 @@ test('a durable ownership write failure rolls back the exact launched process', 
     assert.equal(f.processes.length, 0);
     assert.equal((await runtime.adapter.health()).count, 0);
     runtime.adapter.shutdown();
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('unconfirmed ownership-write rollback retains a usable exact capability and occupied slot', async () => {
+  const f = legacyRuntimeFixture();
+  try {
+    const runtime = f.createRuntime('owner-persistence-uncertain', {
+      ownershipStore: {
+        list: () => [],
+        put() { throw new Error('synthetic durable write failure'); },
+        delete() { return false; },
+      },
+    });
+    const originalTerminate = f.native.terminateOwned;
+    const originalRelease = runtime.cloneManager.release.bind(runtime.cloneManager);
+    f.native.terminateOwned = () => ({ ok: false, confirmed: false, reason: 'synthetic observation uncertainty' });
+    runtime.cloneManager.release = (slotId, liveRows, ...rest) => {
+      if ((liveRows || []).length) {
+        return { ok: false, released: false, reason: 'a synthetic owned process still occupies the slot' };
+      }
+      return originalRelease(slotId, liveRows, ...rest);
+    };
+
+    const response = await runtime.coordinator.prepare({
+      name: 'Uncertain persistence rollback', participants: participants(1, 1), target: { type: 'HOME' },
+    });
+    const operation = response.plan.operations[0];
+    assert.equal(response.plan.state, PLAN_STATES.RECOVERY_REQUIRED);
+    assert.equal(operation.state, 'UNKNOWN');
+    assert.notEqual(operation.capability, null);
+    assert.equal(f.processes.length, 1);
+    assert.equal(runtime.cloneManager.reserved.size, 1);
+    const duplicate = await runtime.coordinator.prepare({
+      name: 'Blocked uncertain duplicate', participants: participants(1, 1), target: { type: 'HOME' },
+    });
+    assert.equal(duplicate.ok, false);
+    assert.equal(duplicate.failureCode, 'DUPLICATE_ACCOUNT_OPERATION');
+    assert.equal(f.processes.length, 1);
+
+    f.native.terminateOwned = originalTerminate;
+    const stopped = await runtime.coordinator.stop(response.planId, operation.operationId);
+    assert.equal(stopped.ok, true);
+    assert.equal(f.processes.length, 0);
+    assert.equal(runtime.cloneManager.reserved.size, 0);
+    runtime.adapter.shutdown();
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('double plan persistence failure rebinds durable exact ownership after coordinator restart', async () => {
+  const f = legacyRuntimeFixture();
+  try {
+    const runtime = f.createRuntime('owner-plan-double-persist');
+    const originalUpdate = runtime.store.update.bind(runtime.store);
+    const originalTerminate = f.native.terminateOwned;
+    let updates = 0;
+    runtime.store.update = (planId, mutator) => {
+      updates += 1;
+      if (updates === 5) throw new Error('Injected plan RUNNING persistence failure.');
+      if (updates === 6) throw new Error('Injected recovery persistence failure.');
+      return originalUpdate(planId, mutator);
+    };
+    f.native.terminateOwned = () => ({ ok: false, confirmed: false, reason: 'Injected cleanup uncertainty.' });
+
+    await assert.rejects(
+      runtime.coordinator.prepare({
+        name: 'Double persistence failure', participants: participants(1, 1), target: { type: 'HOME' },
+      }),
+      /Injected recovery persistence failure/,
+    );
+    const interrupted = runtime.store.list(1)[0];
+    const operation = interrupted.operations[0];
+    assert.equal(operation.state, 'LAUNCHING');
+    assert.equal(f.processes.length, 1);
+    assert.equal(f.ownershipStore.list().length, 1);
+
+    runtime.store.update = originalUpdate;
+    f.native.terminateOwned = originalTerminate;
+    runtime.adapter.shutdown();
+    const recoveredRuntime = f.createRuntime('owner-plan-double-persist-recovered');
+    const recovered = recoveredRuntime.coordinator.get(interrupted.planId);
+    assert.equal(recovered.state, PLAN_STATES.RECOVERY_REQUIRED);
+    assert.equal(recovered.operations[0].state, 'UNKNOWN');
+    assert.notEqual(recoveredRuntime.coordinator.capabilityForOperation(operation.operationId), '');
+
+    const stopped = await recoveredRuntime.coordinator.stop(interrupted.planId, operation.operationId);
+    assert.equal(stopped.ok, true);
+    assert.equal(f.processes.length, 0);
+    assert.equal(f.ownershipStore.list().length, 0);
+    recoveredRuntime.adapter.shutdown();
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('restart launch failure after replacement spawn runs exact public launch compensation', async () => {
+  const f = legacyRuntimeFixture();
+  try {
+    const runtime = f.createRuntime('owner-restart-launch-failure');
+    const launched = await runtime.coordinator.prepare({
+      name: 'Restart spawn failure', participants: participants(1, 1), target: { type: 'HOME' },
+    });
+    const operation = launched.plan.operations[0];
+    runtime.adapter._waitForStable = async () => {
+      throw new Error('Injected replacement stability failure after spawn.');
+    };
+
+    const restarted = await runtime.coordinator.restart(launched.planId, operation.operationId);
+    assert.equal(restarted.ok, false);
+    assert.equal(restarted.plan.operations[0].state, 'STOPPED');
+    assert.equal(f.processes.length, 0);
+    assert.equal(runtime.cloneManager.reserved.size, 0);
+    assert.equal(runtime.coordinator.capabilityForOperation(operation.operationId), '');
+    runtime.adapter.shutdown();
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('double restart persistence failure rebinds the exact replacement after coordinator restart', async () => {
+  const f = legacyRuntimeFixture();
+  try {
+    const runtime = f.createRuntime('owner-restart-double-persist');
+    const launched = await runtime.coordinator.prepare({
+      name: 'Restart double persistence failure', participants: participants(1, 1), target: { type: 'HOME' },
+    });
+    const operation = launched.plan.operations[0];
+    const originalUpdate = runtime.store.update.bind(runtime.store);
+    const originalStop = runtime.adapter.stop.bind(runtime.adapter);
+    let updates = 0;
+    let stopCalls = 0;
+    runtime.store.update = (planId, mutator) => {
+      updates += 1;
+      if (updates <= 2) throw new Error(updates === 1
+        ? 'Injected restart persistence failure.'
+        : 'Injected restart recovery persistence failure.');
+      return originalUpdate(planId, mutator);
+    };
+    runtime.adapter.stop = async (...args) => {
+      stopCalls += 1;
+      if (stopCalls === 2) return { ok: false, confirmed: false, reason: 'Injected replacement cleanup uncertainty.' };
+      return originalStop(...args);
+    };
+
+    await assert.rejects(
+      runtime.coordinator.restart(launched.planId, operation.operationId),
+      /Injected restart recovery persistence failure/,
+    );
+    const replacementCapability = runtime.coordinator.capabilityForOperation(operation.operationId);
+    assert.notEqual(replacementCapability, '');
+    assert.equal(f.processes.length, 1);
+
+    runtime.adapter.stop = originalStop;
+    runtime.adapter.shutdown();
+    const recoveredRuntime = f.createRuntime('owner-restart-double-persist-recovered');
+    const recoveredPlan = recoveredRuntime.coordinator.get(launched.planId);
+    assert.equal(recoveredPlan.state, PLAN_STATES.RECOVERY_REQUIRED);
+    assert.equal(recoveredPlan.operations[0].state, 'UNKNOWN');
+    assert.notEqual(recoveredPlan.operations[0].instanceId, operation.instanceId);
+    assert.notEqual(recoveredRuntime.coordinator.capabilityForOperation(operation.operationId), '');
+
+    const stopped = await recoveredRuntime.coordinator.stop(launched.planId, operation.operationId);
+    assert.equal(stopped.ok, true);
+    assert.equal(f.processes.length, 0);
+    assert.equal(recoveredRuntime.cloneManager.reserved.size, 0);
+    recoveredRuntime.adapter.shutdown();
   } finally {
     f.cleanup();
   }

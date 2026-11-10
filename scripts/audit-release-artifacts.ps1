@@ -251,6 +251,10 @@ try {
 
   $payloadMap = Get-RelativeFileMap $payloadDirectory
   $portableMap = Get-RelativeFileMap $portable
+  $runtimeAllowlist = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'runtime-files.json') -Raw | ConvertFrom-Json
+  $expectedRuntime = @($runtimeAllowlist | ForEach-Object { "src/main/$_" } | Sort-Object)
+  $actualRuntime = @($portableMap.Keys | Where-Object { $_ -like 'src/*' } | Sort-Object)
+  if (@(Compare-Object $expectedRuntime $actualRuntime).Count -ne 0) { throw 'Portable runtime differs from the reviewed module allowlist.' }
   $zipMap = Get-RelativeFileMap $portableDirectory
   $manifestPath = Join-Path $payloadDirectory 'sunday-install-manifest.json'
   $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json

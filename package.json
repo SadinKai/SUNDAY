@@ -1,6 +1,6 @@
 {
     "name":  "sunday-launcher",
-    "version": "1.8.18",
+    "version": "1.8.19",
     "description":  "SUNDAY Launcher - manage multiple Roblox accounts and launch multiple Roblox clients on Windows",
     "author":  "SADINKAI",
     "license":  "MIT",
@@ -10,7 +10,7 @@
     "scripts":  {
                     "start":  "tauri dev",
                     "tauri":  "tauri",
-                    "test":  "node --test test/safe-unit.test.js test/architecture-behavior.test.js test/phase5-orchestration.test.js test/isolation-protocol.test.js test/isolation-synthetic.test.js test/legacy-compat.test.js test/legacy-singleton-guard.test.js test/six-client-capacity.test.js test/navigation-performance.test.js test/runtime-adapter-selection.test.js test/roblox-discovery.test.js test/identity-migration.test.js test/source-policy.test.js test/release-security.test.js",
+                    "test":  "node --test test/safe-unit.test.js test/architecture-behavior.test.js test/phase5-orchestration.test.js test/launch-plan-recovery.test.js test/isolation-protocol.test.js test/isolation-synthetic.test.js test/legacy-compat.test.js test/legacy-singleton-guard.test.js test/six-client-capacity.test.js test/navigation-performance.test.js test/runtime-adapter-selection.test.js test/roblox-discovery.test.js test/identity-migration.test.js test/source-policy.test.js test/release-security.test.js",
                     "test:isolation-synthetic": "node --test test/isolation-synthetic.test.js",
                     "test:isolation-protocol": "node --test test/isolation-protocol.test.js",
                     "selftest":  "npm test",

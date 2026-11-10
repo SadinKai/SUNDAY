@@ -34,8 +34,8 @@ managed Roblox clients from one desktop app.
 2. Download `SundayInstaller.exe` from the latest release.
 3. Run the installer, then open **SUNDAY**.
 
-The v1.8.18 Windows binaries are unsigned, so Windows SmartScreen may show a
-warning. The portable `SundayPortable_1.8.18_x64.zip` is available on
+The v1.8.19 Windows binaries are unsigned, so Windows SmartScreen may show a
+warning. The portable `SundayPortable_1.8.19_x64.zip` is available on
 the same release page. SUNDAY supports Windows 10 or later on x64 and requires
 Microsoft WebView2 Runtime.
 
@@ -84,7 +84,7 @@ from roblox.com to use Multi-instance mode.
 - **Microsoft Store Roblox is detected:** install the standard Windows client
   from roblox.com before using Multi-instance mode.
 - **A session expired:** open Accounts and choose **Sign in again**.
-- **SmartScreen appears:** v1.8.18 is intentionally unsigned. Verify the file
+- **SmartScreen appears:** v1.8.19 is intentionally unsigned. Verify the file
   came from the canonical Releases page and compare its published SHA-256 hash.
 
 See [Troubleshooting](docs/user/troubleshooting.md) for more help.
@@ -93,7 +93,7 @@ See [Troubleshooting](docs/user/troubleshooting.md) for more help.
 
 [![CI](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SadinKai/SUNDAY/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4)
-![Version](https://img.shields.io/badge/version-1.8.18-7A5AF8)
+![Version](https://img.shields.io/badge/version-1.8.19-7A5AF8)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Roblox compatibility can change outside this project's control. The legacy
@@ -151,7 +151,7 @@ documented in [Development](docs/developer/development.md) and
 - Session material is DPAPI-protected and temporary sign-in profiles are
   purged.
 - Network and installer inputs are bounded and validated.
-- Automatic updater installation is not active in v1.8.18. **View releases**
+- Automatic updater installation is not active in v1.8.19. **View releases**
   opens the canonical GitHub page for a manual download.
 
 These controls reduce specific risks; they do not make the host or an account

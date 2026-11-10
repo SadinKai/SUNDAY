@@ -45,6 +45,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
           cargo fmt --manifest-path installer/Cargo.toml --all -- --check
           cargo check --locked --manifest-path src-tauri/Cargo.toml
@@ -91,7 +92,7 @@ jobs:
       - name: Upload exact unsigned release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: sunday-v1.8.18-unsigned-${{ github.sha }}
+          name: sunday-unsigned-${{ github.sha }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14

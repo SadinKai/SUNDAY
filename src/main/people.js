@@ -198,7 +198,7 @@ async function numericUserLookup(query) {
 function presenceFromRecord(p) {
   const labels = { 0: 'Offline', 1: 'Online', 2: 'In game', 3: 'In Studio', 4: 'Offline' };
   const type = p && (p.userPresenceType != null ? p.userPresenceType : p.presenceType);
-  const status = labels[type] || 'Offline';
+  const status = labels[type] || 'Unknown';
   return {
     presence: status,
     lastOnline: p && p.lastOnline || null,
@@ -218,7 +218,9 @@ function presenceFromRecord(p) {
 
 /** Adapt an accounts.js presence record (already status-mapped) to our shape. */
 function adaptPresence(rec) {
-  const status = (rec && rec.status) || 'Offline';
+  const known = new Set(['Offline', 'Online', 'In game', 'In Studio']);
+  const candidate = rec && rec.status;
+  const status = known.has(candidate) ? candidate : 'Unknown';
   return {
     presence: status,
     lastOnline: (rec && rec.lastOnline) || null,
@@ -249,7 +251,9 @@ async function getPresence(userIds) {
   // Try every stored session: a person may be visible to a secondary account
   // even when the first account sees them as offline or hides their game.
   const authed = await accounts.presenceForIds(ids);
-  for (const id of ids) out.set(id, adaptPresence(authed.get(id)));
+  for (const id of ids) {
+    out.set(id, adaptPresence(authed.get(id) || { status: 'Unknown' }));
+  }
   return out;
 }
 

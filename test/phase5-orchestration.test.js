@@ -224,25 +224,90 @@ test('close-one and restart-one are capability-bound and leave sibling instances
   } finally { await f.cleanup(); }
 });
 
-test('simultaneous lifecycle requests cannot mutate the same operation twice', async () => {
+test('restart persistence failure rolls back the exact replacement process', async () => {
+  const f = fixture('sunday-phase5-restart-persist-', { stableMs: 10 });
+  try {
+    const launched = await f.coordinator.prepare(request(1));
+    const operation = launched.plan.operations[0];
+    const originalUpdate = f.store.update.bind(f.store);
+    let failNextUpdate = true;
+    f.store.update = (planId, mutator) => {
+      if (failNextUpdate) {
+        failNextUpdate = false;
+        throw new Error('Injected restart persistence failure.');
+      }
+      return originalUpdate(planId, mutator);
+    };
+
+    const restarted = await f.coordinator.restart(launched.planId, operation.operationId);
+    assert.equal(restarted.ok, false);
+    assert.equal(restarted.plan.operations[0].state, 'STOPPED');
+    assert.match(restarted.error, /restart state.*could not be recorded/i);
+    assert.equal((await f.adapter.health()).running, 0);
+    assert.equal(f.coordinator.capabilityForOperation(operation.operationId), '');
+    assert.equal(Array.from(f.adapter.environments.values()).every(environment => environment.released), true);
+  } finally { await f.cleanup(); }
+});
+
+test('restart persistence failure preserves replacement authority when rollback is unconfirmed', async () => {
+  const f = fixture('sunday-phase5-restart-recovery-', { stableMs: 10 });
+  const originalStop = f.adapter.stop.bind(f.adapter);
+  try {
+    const launched = await f.coordinator.prepare(request(1));
+    const operation = launched.plan.operations[0];
+    const originalUpdate = f.store.update.bind(f.store);
+    let failNextUpdate = true;
+    let stopCalls = 0;
+    f.store.update = (planId, mutator) => {
+      if (failNextUpdate) {
+        failNextUpdate = false;
+        throw new Error('Injected restart persistence failure.');
+      }
+      return originalUpdate(planId, mutator);
+    };
+    f.adapter.stop = async (...args) => {
+      stopCalls += 1;
+      if (stopCalls === 2) {
+        return { ok: false, confirmed: false, reason: 'Injected replacement cleanup uncertainty.' };
+      }
+      return originalStop(...args);
+    };
+
+    const restarted = await f.coordinator.restart(launched.planId, operation.operationId);
+    assert.equal(restarted.ok, false);
+    assert.equal(restarted.plan.state, PLAN_STATES.RECOVERY_REQUIRED);
+    assert.equal(restarted.plan.operations[0].state, 'UNKNOWN');
+    assert.equal(restarted.plan.operations[0].failureCode, 'CLEANUP_UNCONFIRMED');
+    assert.notEqual(restarted.plan.operations[0].capability, operation.capability);
+    assert.equal(f.coordinator.capabilityForOperation(operation.operationId), restarted.plan.operations[0].capability);
+    assert.equal((await f.adapter.health()).running, 1);
+  } finally {
+    f.adapter.stop = originalStop;
+    await f.cleanup();
+  }
+});
+
+test('concurrent restart and stop requests cannot mutate the same operation twice', async () => {
   const f = fixture('sunday-phase5-lifecycle-race-', { stableMs: 10 });
   let releaseRestart;
+  let restartReached;
   try {
     const launched = await f.coordinator.prepare(request(1));
     const operation = launched.plan.operations[0];
     const originalRestart = f.adapter.restart.bind(f.adapter);
     const restartGate = new Promise(resolve => { releaseRestart = resolve; });
+    const entered = new Promise(resolve => { restartReached = resolve; });
     let restartCalls = 0;
     f.adapter.restart = async (...args) => {
       restartCalls += 1;
+      restartReached();
       await restartGate;
       return originalRestart(...args);
     };
 
     const firstPending = f.coordinator.restart(launched.planId, operation.operationId);
-    while (restartCalls < 1) await new Promise(resolve => setTimeout(resolve, 5));
-    const secondPending = f.coordinator.restart(launched.planId, operation.operationId);
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await entered;
+    const secondPending = f.coordinator.stop(launched.planId, operation.operationId);
     const callsBeforeRelease = restartCalls;
     releaseRestart();
     const [first, second] = await Promise.all([firstPending, secondPending]);
@@ -257,6 +322,37 @@ test('simultaneous lifecycle requests cannot mutate the same operation twice', a
   }
 });
 
+test('plan cancellation does not claim an in-flight restart was rolled back', async () => {
+  const f = fixture('sunday-phase5-restart-cancel-', { stableMs: 10 });
+  let releaseRestart;
+  try {
+    const launched = await f.coordinator.prepare(request(1));
+    const operation = launched.plan.operations[0];
+    const originalRestart = f.adapter.restart.bind(f.adapter);
+    const restartGate = new Promise(resolve => { releaseRestart = resolve; });
+    let restartReached;
+    const entered = new Promise(resolve => { restartReached = resolve; });
+    f.adapter.restart = async (...args) => {
+      restartReached();
+      await restartGate;
+      return originalRestart(...args);
+    };
+
+    const restarting = f.coordinator.restart(launched.planId, operation.operationId);
+    await entered;
+    const cancellation = await f.coordinator.cancel(launched.planId);
+    assert.equal(cancellation.ok, true);
+    assert.equal(cancellation.plan.state, PLAN_STATES.COMPLETED);
+    assert.notEqual(cancellation.plan.state, PLAN_STATES.CANCELLED);
+    releaseRestart();
+    const restarted = await restarting;
+    assert.equal(restarted.ok, true);
+  } finally {
+    if (releaseRestart) releaseRestart();
+    await f.cleanup();
+  }
+});
+
 test('stop clears stale authority when environment release throws after confirmed exit', async () => {
   const f = fixture('sunday-phase5-stop-release-throw-', { stableMs: 10 });
   try {
@@ -265,7 +361,9 @@ test('stop clears stale authority when environment release throws after confirme
     f.adapter.release = async () => { throw new Error('Injected release exception.'); };
     const stopped = await f.coordinator.stop(launched.planId, operation.operationId);
     assert.equal(stopped.ok, false);
+    assert.equal(stopped.plan.state, PLAN_STATES.RECOVERY_REQUIRED);
     assert.equal(stopped.plan.operations[0].state, 'UNKNOWN');
+    assert.equal(stopped.plan.operations[0].failureCode, 'CLEANUP_UNCONFIRMED');
     assert.equal(stopped.plan.operations[0].capability, null);
     assert.equal(stopped.plan.operations[0].pid, null);
     assert.equal(f.coordinator.capabilityForOperation(operation.operationId), '');
@@ -273,6 +371,58 @@ test('stop clears stale authority when environment release throws after confirme
   } finally {
     await f.cleanup();
   }
+});
+
+test('restart propagates release-only cleanup uncertainty to the plan', async () => {
+  const f = fixture('sunday-phase5-restart-release-unknown-', { stableMs: 10 });
+  try {
+    const launched = await f.coordinator.prepare(request(1));
+    const operation = launched.plan.operations[0];
+    f.adapter.restart = async (_intent, context) => {
+      const stopped = await f.adapter.stop(context.capability);
+      assert.equal(stopped.confirmed, true);
+      return {
+        ok: false,
+        state: ISOLATION_STATES.ACTIVATED,
+        previousStopped: true,
+        status: 'UNKNOWN',
+        environmentId: context.environmentId,
+        reason: 'Injected restart environment release uncertainty.',
+      };
+    };
+
+    const restarted = await f.coordinator.restart(launched.planId, operation.operationId);
+    assert.equal(restarted.ok, false);
+    assert.equal(restarted.plan.state, PLAN_STATES.RECOVERY_REQUIRED);
+    assert.equal(restarted.plan.operations[0].state, 'UNKNOWN');
+    assert.equal(restarted.plan.operations[0].failureCode, 'CLEANUP_UNCONFIRMED');
+    assert.equal(restarted.plan.operations[0].capability, null);
+    assert.equal(f.coordinator.capabilityForOperation(operation.operationId), '');
+    assert.equal(f.coordinator.operationEnvironments.get(operation.operationId), operation.environmentId);
+    assert.equal((await f.adapter.health()).running, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('shutdown drains in-flight launch compensation before the database closes and preserves completed clients', async () => {
+  const f = fixture('sunday-shutdown-launch-', { stableMs: 5 }, { operationTimeoutMs: 5000 });
+  try {
+    const completed = await f.coordinator.prepare(request(1));
+    assert.equal(completed.ok, true);
+    f.coordinator.resolveIntent = async () => new Promise(() => {});
+    const pending = f.coordinator.prepare(request(1, { participants: [{ accountId: 'other-account', label: 'Other' }] }));
+    while (![...f.coordinator.active.values()].some(runtime => runtime.environments.size > 0)) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    await f.coordinator.shutdown();
+    const cancelled = await pending;
+    assert.equal(cancelled.plan.state, PLAN_STATES.CANCELLED);
+    assert.equal(f.coordinator.active.size, 0);
+    assert.equal((await f.adapter.health()).running, 1, 'completed clients must survive application shutdown');
+    assert.equal(f.coordinator.get(completed.planId).operations[0].state, 'RUNNING');
+    await assert.rejects(f.coordinator.prepare(request(1)), /closing/);
+  } finally { await f.cleanup(); }
 });
 
 test('cancellation and timeout become visible final operation states', async () => {
@@ -302,7 +452,15 @@ test('cancellation requires recovery when an allocated environment cannot be rel
   const f = fixture('sunday-cancel-release-', {}, {
     resolveIntent: async () => new Promise(() => {}),
   });
+  const originalAllocate = f.adapter.allocateInstance.bind(f.adapter);
+  let allocationReached;
+  const allocated = new Promise(resolve => { allocationReached = resolve; });
   try {
+    f.adapter.allocateInstance = async (...args) => {
+      const result = await originalAllocate(...args);
+      allocationReached();
+      return result;
+    };
     f.adapter.release = async () => ({
       ok: false,
       released: false,
@@ -311,10 +469,7 @@ test('cancellation requires recovery when an allocated environment cannot be rel
     });
     const plan = f.store.create(f.coordinator.planner.create(request(1)));
     const running = f.coordinator.run(plan.planId);
-    const deadline = Date.now() + 3000;
-    while (f.adapter.environments.size === 0 && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
+    await allocated;
     assert.equal(f.adapter.environments.size, 1);
     await f.coordinator.cancel(plan.planId);
     const response = await running;
@@ -346,6 +501,156 @@ test('failed intent requires recovery when allocated environment cleanup is unce
     assert.match(response.plan.operations[0].reason, /cleanup.*recovery is required/i);
   } finally {
     await f.cleanup();
+  }
+});
+
+test('post-launch plan persistence failure rolls back the exact owned process and environment', async () => {
+  const f = fixture('sunday-post-launch-persist-', { stableMs: 10 });
+  const originalUpdate = f.store.update.bind(f.store);
+  let updates = 0;
+  f.store.update = (planId, mutator) => {
+    updates += 1;
+    if (updates === 5) {
+      const error = new Error('Injected plan RUNNING persistence failure.');
+      error.code = 'ESTATEWRITE';
+      throw error;
+    }
+    return originalUpdate(planId, mutator);
+  };
+  try {
+    const response = await f.coordinator.prepare(request(1));
+    const health = await f.adapter.health();
+    assert.equal(response.ok, false);
+    assert.equal(response.plan.state, PLAN_STATES.FAILED);
+    assert.equal(response.plan.operations[0].state, 'FAILED');
+    assert.equal(response.plan.operations[0].pid, null);
+    assert.equal(health.running, 0);
+    assert.equal(f.coordinator.operationCapabilities.size, 0);
+    assert.equal(Array.from(f.adapter.environments.values()).every(environment => environment.released), true);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('post-launch plan persistence failure requires recovery when exact process rollback is unconfirmed', async () => {
+  const f = fixture('sunday-post-launch-cleanup-', { stableMs: 10 });
+  const originalUpdate = f.store.update.bind(f.store);
+  const originalStop = f.adapter.stop.bind(f.adapter);
+  let updates = 0;
+  f.store.update = (planId, mutator) => {
+    updates += 1;
+    if (updates === 5) throw new Error('Injected plan RUNNING persistence failure.');
+    return originalUpdate(planId, mutator);
+  };
+  f.adapter.stop = async () => ({
+    ok: false,
+    confirmed: false,
+    reason: 'Injected exact-process cleanup uncertainty.',
+  });
+  try {
+    const response = await f.coordinator.prepare(request(1));
+    assert.equal(response.ok, false);
+    assert.equal(response.plan.state, PLAN_STATES.RECOVERY_REQUIRED);
+    assert.equal(response.plan.operations[0].state, 'UNKNOWN');
+    assert.equal(response.plan.operations[0].failureCode, 'CLEANUP_UNCONFIRMED');
+    assert.equal(response.plan.operations[0].failureStage, 'cleanup');
+    assert.match(response.plan.operations[0].reason, /cleanup.*recovery is required/i);
+    assert.equal((await f.adapter.health()).running, 1);
+    assert.equal(f.coordinator.operationCapabilities.size, 1);
+    assert.equal(Array.from(f.adapter.environments.values()).some(environment => !environment.released), true);
+  } finally {
+    f.adapter.stop = originalStop;
+    await f.cleanup();
+  }
+});
+
+test('double persistence failure retains usable exact authority until cleanup succeeds', async () => {
+  const f = fixture('sunday-post-launch-double-persist-', { stableMs: 10 });
+  const originalUpdate = f.store.update.bind(f.store);
+  const originalStop = f.adapter.stop.bind(f.adapter);
+  let updates = 0;
+  let allowStop = false;
+  f.store.update = (planId, mutator) => {
+    updates += 1;
+    if (updates === 5) throw new Error('Injected plan RUNNING persistence failure.');
+    if (updates === 6) throw new Error('Injected recovery persistence failure.');
+    return originalUpdate(planId, mutator);
+  };
+  f.adapter.stop = async (...args) => allowStop
+    ? originalStop(...args)
+    : { ok: false, confirmed: false, reason: 'Injected exact-process cleanup uncertainty.' };
+  try {
+    await assert.rejects(f.coordinator.prepare(request(1)), /Injected recovery persistence failure/);
+    const persisted = f.store.list(1)[0];
+    const operation = persisted.operations[0];
+    assert.equal(operation.state, 'LAUNCHING');
+    assert.notEqual(f.coordinator.capabilityForOperation(operation.operationId), '');
+    assert.equal((await f.adapter.health()).running, 1);
+
+    allowStop = true;
+    const stopped = await f.coordinator.stop(persisted.planId, operation.operationId);
+    assert.equal(stopped.ok, true);
+    assert.equal(stopped.plan.operations[0].state, 'STOPPED');
+    assert.equal((await f.adapter.health()).running, 0);
+    assert.equal(f.coordinator.capabilityForOperation(operation.operationId), '');
+  } finally {
+    f.adapter.stop = originalStop;
+    await f.cleanup();
+  }
+});
+
+test('restored exact ownership for a pre-final operation remains recoverable and stoppable', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sunday-pre-final-owned-recovery-'));
+  const database = new StateDatabase({ path: path.join(dir, 'state.sqlite3'), assertOwner: () => true });
+  const store = new LaunchPlanStore({ database });
+  const planner = new (require('../src/main/launch-orchestration').LaunchPlanner)();
+  const plan = store.create(planner.create(request(1)));
+  const operationId = plan.operations[0].operationId;
+  store.update(plan.planId, current => {
+    current.state = PLAN_STATES.RUNNING;
+    current.operations[0].state = 'LAUNCHING';
+    current.operations[0].environmentId = 'old-environment';
+    current.operations[0].instanceId = 'owned-instance';
+    return current;
+  });
+  const stoppedCapabilities = [];
+  const releasedEnvironments = [];
+  const adapter = {
+    restoredOwnership() {
+      return [{
+        operationId,
+        accountId: 'account-1',
+        instanceId: 'owned-instance',
+        environmentId: 'replacement-environment',
+        capability: 'restored-exact-capability',
+        pid: 8123,
+      }];
+    },
+    async stop(capability) {
+      stoppedCapabilities.push(capability);
+      return { ok: true, confirmed: true };
+    },
+    async release(environmentId) {
+      releasedEnvironments.push(environmentId);
+      return { ok: true, released: true };
+    },
+  };
+  try {
+    const coordinator = new LaunchCoordinator({ adapter, store });
+    const recovered = coordinator.get(plan.planId);
+    assert.equal(recovered.state, PLAN_STATES.RECOVERY_REQUIRED);
+    assert.equal(recovered.operations[0].state, 'UNKNOWN');
+    assert.equal(recovered.operations[0].pid, 8123);
+    assert.equal(recovered.operations[0].environmentId, 'replacement-environment');
+    assert.equal(coordinator.capabilityForOperation(operationId), 'restored-exact-capability');
+
+    const stopped = await coordinator.stop(plan.planId, operationId);
+    assert.equal(stopped.ok, true);
+    assert.deepEqual(stoppedCapabilities, ['restored-exact-capability']);
+    assert.deepEqual(releasedEnvironments, ['replacement-environment']);
+  } finally {
+    database.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

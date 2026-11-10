@@ -42,6 +42,7 @@ document.addEventListener('click', async (e) => {
       elAction.disabled = true;
       const retry = retryLastLaunch;
       const r = await retry();
+      applyLaunchSelectionResult(r);
       if (r && r.ok) {
         clearLaunchFailure();
         toast(`Launched ${r.launched || 1} client${(r.launched || 1) === 1 ? '' : 's'}`, 'good');
@@ -114,11 +115,11 @@ document.addEventListener('click', async (e) => {
         if (!ok) break;
       }
       elAction.disabled = true;
-      const r = await call(() => api.launch.quick(n));
+      const r = await callLaunch(() => api.launch.quick(n));
       elAction.disabled = false;
       if (handlePreparedPlan(r)) break;
       if (r && r.ok) { clearLaunchFailure(); toast(`Launched ${r.launched} client${r.launched === 1 ? '' : 's'}` + (r.failed ? `, ${r.failed} failed` : ''), 'good'); }
-      else presentLaunchFailure(r, () => call(() => api.launch.quick(n)));
+      else presentLaunchFailure(r, () => callLaunch(() => api.launch.quick(n)));
       break;
     }
     case 'launch-accounts': case 'launch-selected': {
@@ -131,10 +132,19 @@ document.addEventListener('click', async (e) => {
       state.placeId = raw;
       elAction.disabled = true;
       const r = target.gameId && target.placeId
-        ? await call(() => api.launch.join(ids, target.placeId, target.gameId), undefined, 0)
-        : await call(() => api.launch.accounts(ids, target.placeId), undefined, 0);
+        ? await callLaunch(() => api.launch.join(ids, target.placeId, target.gameId))
+        : await callLaunch(() => api.launch.accounts(ids, target.placeId));
       elAction.disabled = false;
       if (handlePreparedPlan(r)) break;
+      applyLaunchSelectionResult(r);
+      let retryIds = ids.filter(accountId => state.selected.has(accountId));
+      const retry = async () => {
+        const response = target.gameId && target.placeId
+          ? await callLaunch(() => api.launch.join(retryIds, target.placeId, target.gameId))
+          : await callLaunch(() => api.launch.accounts(retryIds, target.placeId));
+        retryIds = selectionAfterLaunch(retryIds, response);
+        return response;
+      };
       if (r && r.ok) {
         clearLaunchFailure();
         toast(`Launched ${r.launched} client${r.launched === 1 ? '' : 's'}` + (target.gameId ? ' into the exact server' : '') + (r.failed ? `, ${r.failed} failed` : ''), r.failed ? 'bad' : 'good');
@@ -143,12 +153,9 @@ document.addEventListener('click', async (e) => {
           armWatchdog(ids.map(id => ({ accountId: id, placeId: target.placeId, gameInstanceId: target.gameId, name: 'the game' })));
           toast('Watchdog enabled — dropped clients rejoin automatically', 'good');
         }
-        applyLaunchSelectionResult(r);
         if (state.view === 'instances') views.instances();
         else if (state.view === 'accounts') views.accounts();
-      } else presentLaunchFailure(r, () => target.gameId && target.placeId
-        ? call(() => api.launch.join(ids, target.placeId, target.gameId), undefined, 0)
-        : call(() => api.launch.accounts(ids, target.placeId), undefined, 0));
+      } else presentLaunchFailure(r, retry);
       break;
     }
     case 'launch-account': {
@@ -156,10 +163,10 @@ document.addEventListener('click', async (e) => {
         toast('That account already has an active SUNDAY-managed client.', 'bad');
         break;
       }
-      const r = await call(() => api.launch.accounts([id], ''));
+      const r = await callLaunch(() => api.launch.accounts([id], ''));
       if (handlePreparedPlan(r)) break;
       if (r && r.ok) { clearLaunchFailure(); toast('Launched ' + (r.launched) + ' client', 'good'); }
-      else presentLaunchFailure(r, () => call(() => api.launch.accounts([id], '')));
+      else presentLaunchFailure(r, () => callLaunch(() => api.launch.accounts([id], '')));
       break;
     }
     case 'follow-account': {
@@ -182,7 +189,7 @@ document.addEventListener('click', async (e) => {
       if (!followerIds.length) { toast('Choose at least one other account', 'bad'); break; }
       state.following = true;
       renderFollowDialog();
-      const r = await call(() => api.accounts.follow(targetId, followerIds));
+      const r = await callLaunch(() => api.accounts.follow(targetId, followerIds));
       state.following = false;
       if (handlePreparedPlan(r)) {
         closeFollowDialog();
@@ -481,8 +488,8 @@ document.addEventListener('click', async (e) => {
       if (!ids.length) { toast('None of this session\'s accounts exist anymore', 'bad'); break; }
       elAction.disabled = true;
       const r = session.gameId && session.placeId
-        ? await call(() => api.launch.join(ids, session.placeId, session.gameId))
-        : await call(() => api.launch.accounts(ids, session.placeId || ''));
+        ? await callLaunch(() => api.launch.join(ids, session.placeId, session.gameId))
+        : await callLaunch(() => api.launch.accounts(ids, session.placeId || ''));
       elAction.disabled = false;
       if (handlePreparedPlan(r)) break;
       if (r && r.ok) {
@@ -493,8 +500,8 @@ document.addEventListener('click', async (e) => {
         }
         if (session.keepAlive && session.placeId) armWatchdog(ids.map(id => ({ accountId: id, placeId: session.placeId, gameInstanceId: session.gameId, name: session.name })));
       } else presentLaunchFailure(r, () => session.gameId && session.placeId
-        ? call(() => api.launch.join(ids, session.placeId, session.gameId))
-        : call(() => api.launch.accounts(ids, session.placeId || '')));
+        ? callLaunch(() => api.launch.join(ids, session.placeId, session.gameId))
+        : callLaunch(() => api.launch.accounts(ids, session.placeId || '')));
       break;
     }
     case 'session-delete': {
@@ -570,7 +577,7 @@ document.addEventListener('click', async (e) => {
       const keepAlive = !!($('#fill-keepalive') && $('#fill-keepalive').checked);
       elAction.disabled = true;
       elAction.innerHTML = '<span class="spinner dark"></span> Planning…';
-      const r = await call(() => api.launch.autoFill(draft.ids, draft.placeId, { spread: draft.spread, keepAlive, name: draft.name }), undefined, 300000);
+      const r = await callLaunch(() => api.launch.autoFill(draft.ids, draft.placeId, { spread: draft.spread, keepAlive, name: draft.name }));
       state.fillDraft = null;
       closeModal();
       state.servers = null;
@@ -635,7 +642,7 @@ document.addEventListener('click', async (e) => {
       if (!ids.length) { toast('Those accounts are no longer available', 'bad'); closePersonJoinDialog(); break; }
       join.joining = true;
       renderPersonJoinDialog();
-      const r = await call(() => api.launch.joinPersonMulti(ids, join.userId));
+      const r = await callLaunch(() => api.launch.joinPersonMulti(ids, join.userId));
       if (handlePreparedPlan(r)) {
         closePersonJoinDialog();
         break;
@@ -647,7 +654,7 @@ document.addEventListener('click', async (e) => {
       } else {
         join.joining = false;
         renderPersonJoinDialog();
-        presentLaunchFailure(r, () => call(() => api.launch.joinPersonMulti(ids, join.userId)));
+        presentLaunchFailure(r, () => callLaunch(() => api.launch.joinPersonMulti(ids, join.userId)));
       }
       break;
     }
@@ -675,7 +682,7 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'focus': { const r = await call(() => api.instances.focus(capability)); if (!(r && r.ok)) toast((r && (r.error || r.reason)) || 'Could not focus window', 'bad'); break; }
-    case 'restart': { const r = await call(() => api.instances.restart(capability)); toast(r && r.ok ? 'Client restarted' : ((r && r.error) || 'Restart failed'), r && r.ok ? 'good' : 'bad'); break; }
+    case 'restart': { const r = await callLaunch(() => api.instances.restart(capability)); toast(r && r.ok ? 'Client restarted' : ((r && r.error) || 'Restart failed'), r && r.ok ? 'good' : 'bad'); break; }
     case 'end': { const r = await call(() => api.instances.kill(capability)); toast(r && r.ok ? 'Client ended' : ((r && r.error) || 'Could not end client'), r && r.ok ? 'good' : 'bad'); break; }
 
     case 'modal-cancel': cancelModal(); break;
@@ -852,7 +859,7 @@ content.addEventListener('contextmenu', (e) => {
 });
 async function doRowAction(kind, capability) {
   if (kind === 'focus') { const r = await call(() => api.instances.focus(capability)); if (!(r && r.ok)) toast((r && (r.error || r.reason)) || 'Could not focus', 'bad'); }
-  if (kind === 'restart') { const r = await call(() => api.instances.restart(capability)); toast(r && r.ok ? 'Restarted' : ((r && r.error) || 'Restart failed'), r && r.ok ? 'good' : 'bad'); }
+  if (kind === 'restart') { const r = await callLaunch(() => api.instances.restart(capability)); toast(r && r.ok ? 'Restarted' : ((r && r.error) || 'Restart failed'), r && r.ok ? 'good' : 'bad'); }
   if (kind === 'end') { const r = await call(() => api.instances.kill(capability)); toast(r && r.ok ? 'Ended' : ((r && r.error) || 'Could not end'), r && r.ok ? 'good' : 'bad'); }
 }
 

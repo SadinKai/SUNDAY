@@ -45,9 +45,14 @@ function renderPeopleHome() {
   renderWatchCard();
 }
 
+function peoplePresenceValue(u) {
+  const value = String(u && u.presence || '').trim();
+  return ['Offline', 'Online', 'In game', 'In Studio'].includes(value) ? value : 'Unknown';
+}
+
 function personMatchesFilter(u) {
   const filter = state.people.filter || 'all';
-  const status = String(u && u.presence || 'Offline').toLowerCase();
+  const status = peoplePresenceValue(u).toLowerCase();
   if (filter === 'ingame') return status.includes('game');
   if (filter === 'online') return status === 'online' || status.includes('studio');
   if (filter === 'offline') return status === 'offline';
@@ -57,17 +62,18 @@ function personMatchesFilter(u) {
 /* Live roll-up of the friends on the loaded page: "2 in game · 1 online",
    patched in place by the presence poller so it never goes stale. */
 function peoplePresenceCounts(list) {
-  let ingame = 0, online = 0;
+  let ingame = 0, online = 0, unknown = 0;
   for (const u of (list || [])) {
-    const s = String(u && u.presence || '').toLowerCase();
+    const s = peoplePresenceValue(u).toLowerCase();
     if (s.includes('game')) ingame += 1;
     else if (s === 'online' || s.includes('studio')) online += 1;
+    else if (s === 'unknown') unknown += 1;
   }
-  return { ingame, online, offline: Math.max(0, (list || []).length - ingame - online) };
+  return { ingame, online, offline: Math.max(0, (list || []).length - ingame - online - unknown), unknown };
 }
 function peopleCountsText(list) {
   const c = peoplePresenceCounts(list);
-  return `${c.ingame} in game · ${c.online} online · ${c.offline} offline`;
+  return `${c.ingame} in game · ${c.online} online · ${c.offline} offline${c.unknown ? ` · ${c.unknown} unknown` : ''}`;
 }
 function updatePeopleCounts() {
   const el = document.querySelector('[data-people-counts]');
@@ -75,7 +81,7 @@ function updatePeopleCounts() {
 }
 
 function personPresenceRank(u) {
-  const status = String(u && u.presence || 'Offline').toLowerCase();
+  const status = peoplePresenceValue(u).toLowerCase();
   if (status.includes('game')) return 0;
   if (status === 'online' || status.includes('studio')) return 1;
   if (status === 'unknown') return 3;
@@ -130,7 +136,8 @@ function personCardActions(u) {
 }
 
 function personCard(u) {
-  const presClass = presenceClass(u.presence);
+  const presence = peoplePresenceValue(u);
+  const presClass = presenceClass(presence);
   const avatar = u.avatar ? `<img class="avatar" loading="lazy" src="${esc(u.avatar)}" alt="">` : `<div class="avatar"></div>`;
   const gameLine = `<div class="acct-game" data-person-game="${esc(u.userId)}"${u.game && u.game.name ? '' : ' hidden'}>${u.game && u.game.name ? icon('compass') + ' ' + esc(u.game.name) : ''}</div>`;
   const sources = u.connectedAccounts && u.connectedAccounts.length
@@ -146,7 +153,7 @@ function personCard(u) {
     ${u.bio ? `<div class="person-bio">${esc(u.bio)}</div>` : ''}
     ${sources}
     <div class="row-split" style="margin-top:auto">
-      <span class="presence ${presClass}" data-person-presence="${esc(u.userId)}"><span class="pd"></span>${esc(u.presence)}</span>
+      <span class="presence ${presClass}" data-person-presence="${esc(u.userId)}"><span class="pd"></span>${esc(presence)}</span>
       <span class="inline" data-person-actions="${esc(u.userId)}">${personCardActions(u)}</span>
     </div>
     ${gameLine}
@@ -332,9 +339,10 @@ function profileLivePanel(u) {
 function patchPersonPresence(user) {
   if (!user || !user.userId) return;
   const id = String(user.userId);
+  const presence = peoplePresenceValue(user);
   findAllByData(document, 'person-presence', id).forEach(el => {
-    el.className = 'presence ' + presenceClass(user.presence);
-    el.innerHTML = `<span class="pd"></span>${esc(user.presence || 'Offline')}`;
+    el.className = 'presence ' + presenceClass(presence);
+    el.innerHTML = `<span class="pd"></span>${esc(presence)}`;
   });
   findAllByData(document, 'person-game', id).forEach(el => {
     if (user.game && user.game.name) {
@@ -367,10 +375,16 @@ async function refreshVisiblePeoplePresence() {
   else if (pp.route === 'profile' && pp.detail.profile) users = [pp.detail.profile];
   const ids = Array.from(new Set(users.map(u => Number(u && u.userId)).filter(Boolean)));
   if (!ids.length) return;
+  const route = pp.route;
+  const target = users;
   peoplePresenceBusy = true;
   const r = await call(() => api.people.presence(ids), null, 12000);
   peoplePresenceBusy = false;
   if (!r || !r.ok || !Array.isArray(r.people)) return;
+  if (state.people !== pp || pp.route !== route) return;
+  if ((route === 'home' && pp.search.list !== target)
+      || (route === 'friends' && pp.list !== target)
+      || (route === 'profile' && (!pp.detail || pp.detail.profile !== target[0]))) return;
   const byId = new Map(r.people.map(item => [Number(item.userId), item]));
   if (pp.route === 'home') {
     pp.search.list = pp.search.list.map(user => {
@@ -437,7 +451,8 @@ function renderPeopleProfile() {
   }
   const u = detail.profile;
   const counts = u.counts || {};
-  const presClass = presenceClass(u.presence);
+  const presence = peoplePresenceValue(u);
+  const presClass = presenceClass(presence);
   const created = u.created ? new Date(u.created).toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' }) : 'Unknown';
   const source = u.connectedAccounts && u.connectedAccounts.length ? `Friend of ${u.connectedAccounts.map(a => a.displayName).join(', ')}` : 'Public Roblox profile';
   const groups = u.groups || [], badges = u.robloxBadges || [], assets = u.avatarDetails && u.avatarDetails.assets || [];
@@ -448,7 +463,7 @@ function renderPeopleProfile() {
       <div class="profile-identity">
         ${u.avatar ? `<img src="${esc(u.avatar)}" alt="">` : `<span class="profile-avatar-ph">${icon('users-group')}</span>`}
         <div><h1>${esc(u.displayName)} ${u.hasVerifiedBadge ? `<span class="verified">${icon('check-circle')}</span>` : ''}</h1><p>@${esc(u.username)}</p>
-          <span class="presence ${presClass}" data-person-presence="${esc(u.userId)}"><span class="pd"></span>${esc(u.presence)}</span></div>
+          <span class="presence ${presClass}" data-person-presence="${esc(u.userId)}"><span class="pd"></span>${esc(presence)}</span></div>
       </div>
       <div class="inline" data-profile-actions="${esc(u.userId)}">${profileHeroActions(u)}</div>
     </div>

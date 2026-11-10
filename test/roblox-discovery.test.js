@@ -5,10 +5,12 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const {
   PROTOCOL_KEYS,
   STORE_LEGACY_REASON,
   createDiscoveryEngine,
+  normalizePlayerPath,
   sanitizeLocation,
 } = require('../src/main/roblox');
 
@@ -62,6 +64,112 @@ function cleanup(fixture) {
   fs.rmSync(fixture.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }
 
+test('upgraded custom installation remains discoverable without overriding a newer compatible player', () => {
+  const fixture = makeFixture();
+  const store = require('../src/main/store');
+  try {
+    const custom = fixture.makeClassic(path.join(fixture.root, 'First Last', 'Custom'), 'version-custom');
+    const userData = path.join(fixture.root, 'synthetic-state');
+    store.configure(userData, null, { assertOwner: () => true });
+    store.database().put('documents', 'settings.json', { autoDetect: false, multiInstanceMode: false, robloxPath: custom });
+    const migrated = store.getSettings();
+    const engine = fixture.makeEngine({ inspectExecutables: paths => paths.map(player => fixture.makeMetadata(player, {
+      productVersion: player === custom ? '0.715.0.1' : '0.745.0.1',
+    })) });
+    assert.equal(migrated.robloxPath, '');
+    assert.equal(engine.locate({ autoDetect: true }).found, false);
+    assert.equal(engine.locate(migrated).playerPath, custom, 'fallback must participate in the cache key');
+    const newer = fixture.makeClassic(fixture.local, 'version-newer');
+    assert.equal(engine.locate(migrated, { force: true }).playerPath, newer);
+    assert.equal(engine.locate({ ...migrated, robloxDiscoveryPath: 'missing' }, { force: true }).playerPath, newer);
+  } finally { store.close(); cleanup(fixture); }
+});
+
+test('player paths preserve spaces and punctuation in Windows profile and installation folders', () => {
+  const fixture = makeFixture();
+  try {
+    const profile = path.join(fixture.root, 'Users', "First Last [test] & O'Name \u010Cern\u00FD");
+    const playerPath = fixture.makeClassic(profile, 'version with spaces');
+    const engine = fixture.makeEngine();
+    for (const value of [
+      playerPath,
+      `"${playerPath}"`,
+      `"${playerPath}" -app`,
+      `"${playerPath}" "%1"`,
+      `"${playerPath}" --example="value with spaces"`,
+      `${playerPath} -app`,
+      playerPath.split(path.sep).join('/'),
+      path.dirname(playerPath),
+    ]) {
+      assert.equal(normalizePlayerPath(value), playerPath);
+      assert.equal(engine.pathStatus(value).ok, true);
+    }
+    const expanded = playerPath.replace(profile, '%LOCALAPPDATA%');
+    assert.equal(normalizePlayerPath(expanded, { env: { LOCALAPPDATA: profile } }), playerPath);
+  } finally { cleanup(fixture); }
+});
+
+test('encoded file links resolve the actual player beneath a spaced profile without changing literal percent paths', () => {
+  const fixture = makeFixture();
+  try {
+    const profile = path.join(fixture.root, 'Users', 'First Last #1');
+    const playerPath = fixture.makeClassic(profile, 'version with spaces');
+    const uri = pathToFileURL(playerPath).href;
+    assert.equal(normalizePlayerPath(uri), playerPath);
+    assert.equal(normalizePlayerPath(`"${uri}"`), playerPath);
+    assert.equal(normalizePlayerPath(pathToFileURL(path.dirname(playerPath)).href), playerPath);
+    assert.equal(fixture.makeEngine().pathStatus(uri).ok, true);
+
+    const literalPlayer = fixture.makeClassic(path.join(fixture.root, 'First%20Last'), 'version-literal');
+    assert.equal(normalizePlayerPath(literalPlayer), literalPlayer);
+    assert.equal(normalizePlayerPath(uri + '?download=1'), '');
+    assert.equal(normalizePlayerPath(uri + '#fragment'), '');
+    assert.equal(normalizePlayerPath(uri.replace('First%20Last', 'First%2FLast')), '');
+    assert.equal(normalizePlayerPath('file:///C:/invalid%ZZ/RobloxPlayerBeta.exe'), '');
+  } finally { cleanup(fixture); }
+});
+
+test('registry command rows preserve the entire unquoted player path when the profile contains spaces', () => {
+  const fixture = makeFixture();
+  try {
+    const profile = path.join(fixture.root, 'Users', 'First Last');
+    const playerPath = fixture.makeClassic(profile, 'version-current');
+    for (const type of ['REG_SZ', 'REG_EXPAND_SZ']) {
+      const data = type === 'REG_EXPAND_SZ' ? playerPath.replace(profile, '%TEST_PROFILE%') : playerPath;
+      const output = `HKEY_CURRENT_USER\\Software\\Classes\\roblox-player\\shell\\open\\command\r\n    (Default)    ${type}    ${data} -app\r\n`;
+      assert.equal(normalizePlayerPath(output, { env: { TEST_PROFILE: profile } }), playerPath);
+      const engine = fixture.makeEngine({
+        queryRegistry: () => ({ protocol: output.replace('%TEST_PROFILE%', profile) }),
+        inspectExecutables: paths => paths.filter(file => fs.existsSync(file)).map(file => fixture.makeMetadata(file)),
+      });
+      const location = engine.locate({ autoDetect: true, multiInstanceMode: true });
+      assert.equal(location.found, true);
+      assert.equal(location.playerPath, playerPath);
+      assert.equal(location.source, 'registry');
+    }
+  } finally { cleanup(fixture); }
+});
+
+test('a directory name containing the player executable name does not truncate a real path', () => {
+  const fixture = makeFixture();
+  try {
+    const base = path.join(fixture.root, 'RobloxPlayerBeta.exe backup', 'First Last');
+    const playerPath = fixture.makeClassic(base, 'version-current');
+    assert.equal(normalizePlayerPath(playerPath), playerPath);
+    assert.equal(normalizePlayerPath(path.dirname(playerPath)), playerPath);
+    assert.equal(normalizePlayerPath(`${playerPath} -app`), playerPath);
+  } finally { cleanup(fixture); }
+});
+
+test('normalizing a spaced UNC player path preserves its server prefix without accessing the share', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const playerPath = '\\\\synthetic-server\\Shared Users\\First Last\\RobloxPlayerBeta.exe';
+  const fileSystem = { existsSync: () => false };
+  assert.equal(normalizePlayerPath(playerPath, { fs: fileSystem }), playerPath);
+  assert.equal(normalizePlayerPath(`"${playerPath}" -app`, { fs: fileSystem }), playerPath);
+});
+
 test('classic discovery verifies publisher identity, merges evidence, and prefers protocol registration', () => {
   const fixture = makeFixture();
   try {
@@ -100,6 +208,96 @@ test('bounded classic roots include LocalAppData, both Program Files roots, and 
     );
     assert.equal(location.playerPath, path.resolve(installations[3]), 'newest verified classic candidate should win a source tie');
   } finally { cleanup(fixture); }
+});
+
+test('automatic discovery prefers the newer verified player over a stale registry or process entry', () => {
+  for (const source of ['registry', 'process']) {
+    const fixture = makeFixture();
+    try {
+      const oldPlayer = fixture.makeClassic(fixture.local, 'version-old-715');
+      const newPlayer = fixture.makeClassic(fixture.programFiles, 'version-current-745', 10_000);
+      const engine = fixture.makeEngine({
+        queryRegistry: () => source === 'registry' ? { protocol: `"${oldPlayer}" -app` } : {},
+        inspectProcesses: () => source === 'process' ? [{ name: 'RobloxPlayerBeta.exe', executablePath: oldPlayer }] : [],
+        inspectExecutables: paths => paths.map(playerPath => fixture.makeMetadata(playerPath, {
+          productVersion: playerPath === path.resolve(oldPlayer) ? '0, 715, 0, 7151110' : '0, 745, 0, 7451110',
+        })),
+      });
+      for (const multiInstanceMode of [true, false]) {
+        const location = engine.locate({ autoDetect: true, multiInstanceMode }, { force: true });
+        assert.equal(location.playerPath, path.resolve(newPlayer));
+        assert.equal(location.source, 'filesystem');
+        assert.equal(location.selectedCandidate.verified, true);
+      }
+    } finally { cleanup(fixture); }
+  }
+});
+
+test('automatic player version comparison handles numeric and mixed Windows version formats', () => {
+  for (const [older, newer] of [
+    ['0.99.0.9999999', '0, 100, 0, 1'],
+    ['0, 745, 0, 9', '0.745.0.10'],
+    ['0.745.0', '0, 745, 0, 1'],
+  ]) {
+    const fixture = makeFixture();
+    try {
+      const oldPlayer = fixture.makeClassic(fixture.local, 'version-old');
+      const newPlayer = fixture.makeClassic(fixture.programFiles, 'version-new', 10_000);
+      const engine = fixture.makeEngine({
+        queryRegistry: () => ({ protocol: oldPlayer }),
+        inspectExecutables: paths => paths.map(playerPath => fixture.makeMetadata(playerPath, {
+          productVersion: playerPath === path.resolve(oldPlayer) ? older : newer,
+        })),
+      });
+      assert.equal(engine.locate({ autoDetect: true, multiInstanceMode: true }).playerPath, path.resolve(newPlayer));
+    } finally { cleanup(fixture); }
+  }
+});
+
+test('newer player discovery preserves an explicit installation or manual-path selection', () => {
+  const fixture = makeFixture();
+  try {
+    const oldPlayer = fixture.makeClassic(fixture.local, 'version-old');
+    const newPlayer = fixture.makeClassic(fixture.programFiles, 'version-new');
+    const engine = fixture.makeEngine({
+      queryRegistry: () => ({ protocol: oldPlayer }),
+      inspectExecutables: paths => paths.map(playerPath => fixture.makeMetadata(playerPath, {
+        productVersion: playerPath === path.resolve(oldPlayer) ? '0.715.0.7151110' : '0.745.0.7451110',
+      })),
+    });
+    const automatic = engine.locate({ autoDetect: true, multiInstanceMode: true }, { force: true });
+    const oldCandidate = automatic.candidates.find(candidate => candidate.playerPath === path.resolve(oldPlayer));
+    assert.ok(automatic.candidates.some(candidate => candidate.playerPath === path.resolve(newPlayer)));
+    assert.equal(engine.locate({
+      autoDetect: true, multiInstanceMode: true, robloxInstallationId: oldCandidate.id,
+    }, { force: true }).playerPath, path.resolve(oldPlayer));
+    assert.equal(engine.locate({
+      autoDetect: false, multiInstanceMode: true, robloxPath: oldPlayer,
+    }, { force: true }).playerPath, path.resolve(oldPlayer));
+  } finally { cleanup(fixture); }
+});
+
+test('unverified newer players are rejected and equal or unknown versions preserve source precedence', () => {
+  for (const mode of ['invalid-signature', 'equal-version', 'unknown-version']) {
+    const fixture = makeFixture();
+    try {
+      const registered = fixture.makeClassic(fixture.local, 'version-registered', 10_000);
+      fixture.makeClassic(fixture.programFiles, 'version-other');
+      const engine = fixture.makeEngine({
+        queryRegistry: () => ({ protocol: registered }),
+        inspectExecutables: paths => paths.map(playerPath => {
+          const isRegistered = playerPath === path.resolve(registered);
+          return fixture.makeMetadata(playerPath, {
+            productVersion: mode === 'unknown-version' ? 'unknown' : isRegistered || mode === 'equal-version' ? '0.715.0.1' : '0.745.0.1',
+            signatureStatus: mode === 'invalid-signature' && !isRegistered ? 'NotSigned' : 'Valid',
+          });
+        }),
+      });
+      const location = engine.locate({ autoDetect: true, multiInstanceMode: true });
+      assert.equal(location.playerPath, path.resolve(registered));
+      if (mode === 'invalid-signature') assert.equal(location.candidates.length, 1);
+    } finally { cleanup(fixture); }
+  }
 });
 
 test('spoofed names, invalid signatures, non-Roblox products, and Roblox Studio are rejected', () => {

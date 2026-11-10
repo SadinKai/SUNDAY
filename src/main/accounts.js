@@ -332,7 +332,10 @@ function gameFromPresence(p) {
 function sameGame(a, b) {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return a.name === b.name && String(a.placeId) === String(b.placeId);
+  return a.name === b.name
+    && String(a.placeId) === String(b.placeId)
+    && String(a.rootPlaceId) === String(b.rootPlaceId)
+    && String(a.gameId) === String(b.gameId);
 }
 
 function list() { return readRaw().map(sanitize); }
@@ -404,7 +407,7 @@ async function getPresence(userId, cookie) {
     if (!res.ok) return { status: 'Unknown', error: 'HTTP ' + res.status };
     const j = await res.json();
     const p = j && j.userPresences && j.userPresences[0];
-    if (!p) return { status: 'Offline' };
+    if (!p) return { status: 'Unknown', error: 'Presence response omitted the requested user' };
     return presenceFromRecord(p);
   } catch (err) {
     return { status: 'Unknown', error: (err && err.message) || 'network error' };
@@ -416,7 +419,7 @@ function presenceFromRecord(p) {
   // Roblox uses `userPresenceType` (the old `presenceType` was always undefined).
   const t = (p.userPresenceType != null ? p.userPresenceType : p.presenceType);
   return {
-    status: PRESENCE_MAP[t] || 'Offline',
+    status: PRESENCE_MAP[t] || 'Unknown',
     lastLocation: p.lastLocation || null,
     placeId: p.placeId || null,
     rootPlaceId: p.rootPlaceId || null,

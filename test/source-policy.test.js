@@ -479,7 +479,7 @@ test('multi-instance preference and privacy documentation keep secrets outside r
   const settingsView = read('src/renderer/views/settings.js');
   const privacy = read('PRIVACY.md');
   assert.match(store, /multiInstanceMode: true/);
-  assert.match(store, /s\.multiInstanceMode = s\.multiInstanceMode === true/);
+  assert.equal(require('../src/main/store').normalizeSettings({}).multiInstanceMode, true);
   assert.match(backend, /const legacyCompatibility = resolveLegacyCompatibility\(settings, externalAdapterEnvironment\)/);
   assert.match(read('src/renderer/views/launch.js'), /label: 'MULTI-INSTANCE MODE'/);
   assert.doesNotMatch(settingsView, /\.ROBLOSECURITY|auth(?:entication)?Ticket|cookieValue/i);

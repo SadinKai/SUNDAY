@@ -1,16 +1,16 @@
 # Release engineering
 
-SUNDAY v1.8.18 uses a straightforward unsigned GitHub release. A successful
+SUNDAY v1.8.19 uses a straightforward unsigned GitHub release. A successful
 source build is not public until the exact audited files are uploaded and their
 published checksums are verified.
 
 ## Canonical version and public files
 
-Version `1.8.18` is declared in `package.json`, both Cargo manifests, and
+Version `1.8.19` is declared in `package.json`, both Cargo manifests, and
 `src-tauri/tauri.conf.json`. The public release contains only:
 
 - `SundayInstaller.exe`;
-- `SundayPortable_1.8.18_x64.zip`; and
+- `SundayPortable_1.8.19_x64.zip`; and
 - `SHA256SUMS.txt`.
 
 Source archives generated automatically by GitHub are not SUNDAY build
@@ -36,6 +36,24 @@ Copy only the installer and portable ZIP into `release-assets`, then generate
 checksum file after publication.
 
 ## Launch qualification
+
+The bounded two-account release gate is available when only a pair is
+authorized. It launches each account once, verifies responsive clone clients,
+selection clearing through refresh, application restart with both clients
+alive, exact ownership restoration, exact stops, and final cleanup. It refuses
+to run without explicit authorization and a pinned executable digest:
+
+```powershell
+$env:SUNDAY_TEST_EXE = (Resolve-Path 'dist/Sunday/Sunday.exe').Path
+$env:SUNDAY_TEST_SHA256 = (Get-FileHash -LiteralPath $env:SUNDAY_TEST_EXE -Algorithm SHA256).Hash.ToLowerInvariant()
+$env:SUNDAY_RELEASE_PAIR_QUALIFICATION = '1'
+node scripts/qualify-release-pair.mjs
+```
+
+This gate uses two existing non-expired accounts through the product API. It
+does not decrypt or copy credentials. It scans only newly appended log bytes
+and leaves historical forensic logs private. Record the exact qualified count
+in the release notes. A pair pass does not qualify six real clients.
 
 A release candidate that changes Roblox launch behavior must pass the guarded
 packaged Settings/default launch gate using the exact built `Sunday.exe` and
@@ -65,7 +83,7 @@ forensic stage data.
 The multi-instance release gate is the existing Settings-selected
 `LegacyRobloxIsolationAdapter` running its bounded clone, native singleton,
 slot-ownership, capability, and cleanup path on real Windows. Provider research
-and environment-broker qualification are not part of the v1.8.18 shipping or
+and environment-broker qualification are not part of the v1.8.19 shipping or
 publication path.
 
 The exact packaged candidate must inspect registered AppX/MSIX metadata on the
@@ -80,7 +98,7 @@ observation.
 
 ## Unsigned initial binaries
 
-The v1.8.18 Windows binaries are intentionally unsigned. Windows
+The v1.8.19 Windows binaries are intentionally unsigned. Windows
 SmartScreen may display a warning when the installer or application starts.
 Do not claim publisher identity, fabricate signatures, or bypass Windows
 security warnings.
@@ -95,5 +113,5 @@ an embedded release publisher retain the stricter Authenticode path.
 
 ## Update status
 
-Automatic update application remains unavailable. Users download v1.8.18 from
+Automatic update application remains unavailable. Users download v1.8.19 from
 the canonical GitHub Releases page.
